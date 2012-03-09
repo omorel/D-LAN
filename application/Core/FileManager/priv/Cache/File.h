@@ -29,6 +29,7 @@
 #include <QList>
 #include <QSharedPointer>
 #include <QDateTime>
+#include <QTimer>
 
 #include <Protos/common.pb.h>
 #include <Protos/files_cache.pb.h>
@@ -47,6 +48,7 @@ namespace FM
 
    class File : public Entry
    {
+      Q_OBJECT
    public:
       File(
          Directory* dir,
@@ -56,8 +58,6 @@ namespace FM
          const Common::Hashes& hashes = Common::Hashes(),
          bool createPhysically = false
       );
-
-      virtual ~File();
 
       void setToUnfinished(qint64 size, const Common::Hashes& hashes = Common::Hashes());
 
@@ -101,6 +101,16 @@ namespace FM
       void changeDirectory(Directory* dir);
       bool hasAParentDir(Directory* dir);
 
+   protected:
+      ~File();
+
+   private slots:
+      virtual void internalDel();
+      void startWriteTimer();
+      void startReadTimer();
+      void writeTimerElapsed();
+      void readTimerElapsed();
+
    private:
       void deleteAllChunks();
       void createPhysicalFile();
@@ -123,6 +133,8 @@ namespace FM
       QFile* fileInReadMode;
       QMutex writeLock; ///< Protect the file from concurrent access from different downloaders.
       QMutex readLock; ///< Protect the file from concurrent access from different uploaders.
+      QTimer writeTimer;
+      QTimer readTimer;
       mutable QMutex mutex;
 
       // Mutex and wait condition used during hashing.

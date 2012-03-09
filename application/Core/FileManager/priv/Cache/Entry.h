@@ -19,7 +19,9 @@
 #ifndef FILEMANAGER_ENTRY_H
 #define FILEMANAGER_ENTRY_H
 
+#include <QObject>
 #include <QString>
+#include <QThread>
 
 #include <Common/Uncopyable.h>
 
@@ -31,11 +33,11 @@ namespace FM
    class SharedDirectory;
    class Cache;
 
-   class Entry : Common::Uncopyable
+   class Entry : public QObject, Common::Uncopyable
    {
    public:
       Entry(Cache* cache, const QString& name, qint64 size = 0);
-      virtual ~Entry();
+      void del();
 
       virtual void populateEntry(Protos::Common::Entry* entry, bool setSharedDir = false) const;
       void populateEntrySharedDir(Protos::Common::Entry* entry) const;
@@ -67,10 +69,15 @@ namespace FM
       virtual qint64 getSize() const;
 
    protected:
+      virtual ~Entry();
+
       Cache* cache;
 
       QString name;
       qint64 size;
+
+   private slots:
+      virtual void internalDel();
    };
 
    inline bool operator<(const Entry& e1, const Entry& e2)

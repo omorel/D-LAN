@@ -25,6 +25,9 @@ namespace FM
 {
    // 2 -> 3 : BLAKE -> Sha-1
    const int FILE_CACHE_VERSION = 3;
+
+   // [ms].
+   const int TIME_KEEP_FILE_OPEN = 1000;
 }
 
 #endif

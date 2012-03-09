@@ -57,14 +57,19 @@ Directory::~Directory()
    QMutexLocker locker(&this->mutex);
 
    foreach (File* f, this->files)
-      delete f;
+      f->del();
    foreach (Directory* d, this->subDirs)
-      delete d;
+      d->del();
 
    if (this->parent)
       this->parent->subDirDeleted(this);
 
    L_DEBU(QString("Directory deleted : %1").arg(this->getFullPath()));
+}
+
+void Directory::internalDel()
+{
+   delete this;
 }
 
 /**
@@ -106,7 +111,7 @@ QList<File*> Directory::restoreFromFileCache(const Protos::FileCache::Hashes_Dir
          if (!file->isComplete())
          {
             file->removeUnfinishedFiles();
-            delete file;
+            file->del();
          }
       }
    }

@@ -33,9 +33,12 @@ Entry::Entry(Cache* cache, const QString& name, qint64 size) :
    this->cache->onEntryAdded(this);
 }
 
-Entry::~Entry()
+void Entry::del()
 {
-   this->cache->onEntryRemoved(this);
+   if (QThread::currentThread() == this->thread())
+      this->internalDel();
+   else
+      QMetaObject::invokeMethod(this, "internalDel", Qt::QueuedConnection);
 }
 
 void Entry::populateEntry(Protos::Common::Entry* entry, bool setSharedDir) const
@@ -84,4 +87,14 @@ void Entry::changeName(const QString& newName)
 qint64 Entry::getSize() const
 {
    return this->size;
+}
+
+Entry::~Entry()
+{
+   this->cache->onEntryRemoved(this);
+}
+
+void Entry::internalDel()
+{
+   delete this;
 }

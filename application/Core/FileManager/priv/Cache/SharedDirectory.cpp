@@ -99,6 +99,11 @@ SharedDirectory::~SharedDirectory()
    L_DEBU(QString("SharedDirectory deleted : %1").arg(this->path));
 }
 
+void SharedDirectory::internalDel()
+{
+   delete this;
+}
+
 QString SharedDirectory::getPath() const
 {
    return "";

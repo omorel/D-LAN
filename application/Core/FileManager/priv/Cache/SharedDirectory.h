@@ -42,9 +42,13 @@ namespace FM
    private:
       void init();
 
-   public:
+   protected:
       ~SharedDirectory();
 
+   private slots:
+      virtual void internalDel();
+
+   public:
       /**
         * Return always "" thus it makes this method the most usefull of the entire known univers.
         */

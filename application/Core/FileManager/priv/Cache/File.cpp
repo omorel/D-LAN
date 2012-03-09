@@ -88,32 +88,20 @@ File::File(
 {
    L_DEBU(QString("New file : %1 (%2), createPhysically = %3").arg(this->getFullPath()).arg(Common::Global::formatByteSize(this->size)).arg(createPhysically));
 
+   this->writeTimer.setSingleShot(true);
+   this->writeTimer.setInterval(TIME_KEEP_FILE_OPEN);
+   connect(&this->writeTimer, SIGNAL(timeout()), this, SLOT(writeTimerElapsed()));
+
+   this->readTimer.setSingleShot(true);
+   this->readTimer.setInterval(TIME_KEEP_FILE_OPEN);
+   connect(&this->readTimer, SIGNAL(timeout()), this, SLOT(readTimerElapsed()));
+
    if (createPhysically)
       this->createPhysicalFile();
 
    this->setHashes(hashes);
 
    this->dir->add(this);
-}
-
-File::~File()
-{
-   // QMutexLocker(&this->cache->getMutex()); // TODO : Is it necessary ?
-
-   this->dir->fileDeleted(this);
-
-   foreach (QSharedPointer<Chunk> c, this->chunks)
-      c->fileDeleted();
-
-   this->deleteAllChunks();
-
-   QMutexLocker lockerWrite(&this->writeLock);
-   delete this->fileInWriteMode;
-
-   QMutexLocker lockerRead(&this->readLock);
-   delete this->fileInReadMode;
-
-   L_DEBU(QString("File deleted : %1").arg(this->getFullPath()));
 }
 
 /**
@@ -263,12 +251,16 @@ void File::newDataWriterCreated()
    this->numDataWriter++;
    if (this->numDataWriter == 1)
    {
-      this->fileInWriteMode = new QFile(this->getFullPath());
-      if (!this->fileInWriteMode->open(QIODevice::ReadWrite | QIODevice::Unbuffered)) // We have the same performance with or without "QIODevice::Unbuffered".
+      this->writeTimer.stop();
+      if (!this->fileInWriteMode)
       {
-         delete this->fileInWriteMode;
-         this->fileInWriteMode = 0;
-         throw UnableToOpenFileInWriteModeException();
+         this->fileInWriteMode = new QFile(this->getFullPath());
+         if (!this->fileInWriteMode->open(QIODevice::ReadWrite | QIODevice::Unbuffered)) // We have the same performance with or without "QIODevice::Unbuffered".
+         {
+            delete this->fileInWriteMode;
+            this->fileInWriteMode = 0;
+            throw UnableToOpenFileInWriteModeException();
+         }
       }
    }
 }
@@ -283,6 +275,7 @@ void File::newDataReaderCreated()
    this->numDataReader++;
    if (this->numDataReader == 1)
    {
+      this->readTimer.stop();
       this->fileInReadMode = new QFile(this->getFullPath());
 
       // Why a file in readonly need to be buffered? Without the flag "QIODevice::Unbuffered" a lot of memory is consumed for nothing
@@ -301,10 +294,7 @@ void File::dataWriterDeleted()
    QMutexLocker locker(&this->writeLock);
 
    if (--this->numDataWriter == 0)
-   {
-      delete this->fileInWriteMode;
-      this->fileInWriteMode = 0;
-   }
+      QMetaObject::invokeMethod(this, "startWriteTimer", Qt::QueuedConnection);
 }
 
 void File::dataReaderDeleted()
@@ -312,13 +302,7 @@ void File::dataReaderDeleted()
    QMutexLocker locker(&this->readLock);
 
    if (--this->numDataReader == 0)
-   {
-      delete this->fileInReadMode;
-      this->fileInReadMode = 0;
-
-      if (this->tryToRename)
-         this->setAsComplete();
-   }
+      QMetaObject::invokeMethod(this, "startReadTimer", Qt::QueuedConnection);
 }
 
 /**
@@ -677,6 +661,101 @@ bool File::hasAParentDir(Directory* dir)
    if (this->dir == dir)
       return true;
    return this->dir->isAChildOf(dir);
+}
+
+/*void File::timerEvent(QTimerEvent* event)
+{
+   if (event->timerId() == this->writeTimer.timerId())
+   {
+      QMutexLocker locker(&this->writeLock);
+      this->writeTimer.stop();
+      if (this->numDataWriter == 0)
+      {
+         delete this->fileInWriteMode;
+         this->fileInWriteMode = 0;
+      }
+   }
+   else if (event->timerId() == this->readTimer.timerId())
+   {
+      QMutexLocker locker(&this->readLock);
+      this->readTimer.stop();
+      if (this->numDataReader == 0)
+      {
+         delete this->fileInReadMode;
+         this->fileInReadMode = 0;
+
+         if (this->tryToRename)
+            this->setAsComplete();
+      }
+   }
+}*/
+
+void File::internalDel()
+{
+   delete this;
+}
+
+void File::startWriteTimer()
+{
+   this->writeTimer.start();
+}
+
+void File::startReadTimer()
+{
+   this->readTimer.start();
+}
+
+void File::writeTimerElapsed()
+{
+   QMutexLocker locker(&this->writeLock);
+   if (this->numDataWriter == 0)
+   {
+      delete this->fileInWriteMode;
+      this->fileInWriteMode = 0;
+   }
+
+}
+
+void File::readTimerElapsed()
+{
+   QMutexLocker locker(&this->readLock);
+   if (this->numDataReader == 0)
+   {
+      delete this->fileInReadMode;
+      this->fileInReadMode = 0;
+
+      if (this->tryToRename)
+         this->setAsComplete();
+   }
+}
+
+File::~File()
+{
+   // QMutexLocker(&this->cache->getMutex()); // TODO : Is it necessary ?
+
+   this->dir->fileDeleted(this);
+
+   foreach (QSharedPointer<Chunk> c, this->chunks)
+      c->fileDeleted();
+
+   this->deleteAllChunks();
+
+   {
+      QMutexLocker lockerWrite(&this->writeLock);
+      this->writeTimer.stop();
+      delete this->fileInWriteMode;
+      this->fileInWriteMode = 0;
+   }
+
+
+   {
+      QMutexLocker lockerRead(&this->readLock);
+      this->readTimer.stop();
+      delete this->fileInReadMode;
+      this->fileInReadMode = 0;
+   }
+
+   L_DEBU(QString("File deleted : %1").arg(this->getFullPath()));
 }
 
 void File::deleteAllChunks()

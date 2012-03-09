@@ -44,10 +44,12 @@ namespace FM
 
    protected:
       Directory(Cache* cache, const QString& name);
-
-   public:
       virtual ~Directory();
 
+   private slots:
+      virtual void internalDel();
+
+   public:
       QList<File*> restoreFromFileCache(const Protos::FileCache::Hashes_Dir& dir);
       void populateHashesDir(Protos::FileCache::Hashes_Dir& dirToFill) const;
 

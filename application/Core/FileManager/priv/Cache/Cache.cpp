@@ -51,7 +51,7 @@ Cache::Cache() :
 Cache::~Cache()
 {
    for (QListIterator<SharedDirectory*> i(this->sharedDirs); i.hasNext();)
-      delete i.next();
+      i.next()->del();
 }
 
 /**

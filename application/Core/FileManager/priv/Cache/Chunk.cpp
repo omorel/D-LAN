@@ -92,7 +92,7 @@ void Chunk::removeItsIncompleteFile()
    if (this->file && !this->file->isComplete())
    {
       this->file->removeUnfinishedFiles();
-      delete this->file;
+      this->file->del();
    }
 }
 

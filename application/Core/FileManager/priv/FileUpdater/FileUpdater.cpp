@@ -251,7 +251,7 @@ void FileUpdater::run()
             this->dirWatcher->rmDir(dir->getFullPath());
 
          dir->removeUnfinishedFiles();
-         delete dir;
+         dir->del();
       }
       this->dirsToRemove.clear();
 
@@ -613,12 +613,14 @@ void FileUpdater::deleteEntry(Entry* entry)
       }
 
       file->removeUnfinishedFiles();
-      delete file;
+      file->del();
+      //delete file;
    }
    else
    {
       entry->removeUnfinishedFiles();
-      delete entry;
+      entry->del();
+      //delete entry;
    }
 }
 
