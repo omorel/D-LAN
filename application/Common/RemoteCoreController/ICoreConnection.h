@@ -82,6 +82,11 @@ namespace RCC
         */
       virtual void connectToCore(const QString& address, quint16 port, Common::Hash password) = 0;
 
+      /**
+        * Same as the method above but takes a plain password, it will be automatically salted.
+        */
+      virtual void connectToCore(const QString& address, quint16 port, const QString& password) = 0;
+
       virtual Common::Hash getRemoteID() const = 0;
 
       virtual bool isLocal() const = 0;
@@ -108,7 +113,17 @@ namespace RCC
         */
       virtual void setCoreLanguage(const QLocale locale) = 0;
 
-      virtual void setCorePassword(Common::Hash newPassword, Common::Hash oldPassword = Common::Hash()) = 0;
+      /**
+        * @param newPassword
+        * @param oldPassword Hased + salted.
+        * @return true if the given old password match the current password else false.
+        */
+      virtual bool setCorePassword(const QString& newPassword, const QString& oldPassword = QString()) = 0;
+
+      /**
+        * Don't need to provide the old password to reset a password.
+        */
+      virtual void resetCorePassword() = 0;
 
       /**
         * Get the roots folders (shared directories) of a given peer.
@@ -197,7 +212,7 @@ namespace RCC
       void connecting();
       void connectingError(RCC::ICoreConnection::ConnectionErrorCode); // Can only be thrown during the connection process.
       void connected();
-      void disconnected(); // Can only be thrown if 'coreConnected()' has been previously thrown.
+      void disconnected(bool asked); // Can only be thrown if 'coreConnected()' has been previously thrown. 'asked' = true if disconnected by 'disconnectFromCore()'.
 
       void newState(const Protos::GUI::State&);
       void newChatMessages(const Protos::GUI::EventChatMessages&);

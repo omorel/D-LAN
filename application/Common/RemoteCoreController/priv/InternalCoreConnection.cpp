@@ -22,10 +22,12 @@ using namespace RCC;
 #include <QHostAddress>
 #include <QCoreApplication>
 
+#include <Common/ZeroCopyStreamQIODevice.h>
+#include <Common/ProtoHelper.h>
+#include <Common/Constants.h>
+#include <Common/Global.h>
+
 #include <LogManager/Builder.h>
-#include <ZeroCopyStreamQIODevice.h>
-#include <ProtoHelper.h>
-#include <Constants.h>
 
 #include <priv/CoreController.h>
 #include <priv/Log.h>
@@ -46,7 +48,9 @@ InternalCoreConnection::InternalCoreConnection() :
    Common::MessageSocket(new InternalCoreConnection::Logger()),
    coreStatus(NOT_RUNNING),
    currentHostLookupID(-1),
-   authenticated(false)
+   authenticated(false),
+   forcedToClose(false),
+   salt(0)
 {
    this->startListening();
 }
@@ -77,6 +81,12 @@ void InternalCoreConnection::connectToCore(const QString& address, quint16 port,
    this->currentHostLookupID = QHostInfo::lookupHost(this->connectionInfo.address, this, SLOT(adressResolved(QHostInfo)));
 }
 
+void InternalCoreConnection::connectToCore(const QString& address, quint16 port, const QString& password)
+{
+   this->password = password;
+   this->connectToCore(address, port, Common::Hash());
+}
+
 bool InternalCoreConnection::isConnected() const
 {
    return MessageSocket::isConnected() && this->authenticated;
@@ -84,9 +94,11 @@ bool InternalCoreConnection::isConnected() const
 
 void InternalCoreConnection::disconnectFromCore()
 {
+   this->forcedToClose = true;
+   this->socket->close();
+   this->forcedToClose = false;
    this->addressesToTry.clear();
    this->connectionInfo.clear();
-   this->socket->close();
 }
 
 void InternalCoreConnection::sendChatMessage(const QString& message)
@@ -107,41 +119,64 @@ void InternalCoreConnection::setCoreLanguage(const QLocale locale)
    this->sendCurrentLanguage();
 }
 
-void InternalCoreConnection::setCorePassword(Hash newPassword, Hash oldPassword)
+bool InternalCoreConnection::setCorePassword(const QString& newPassword, const QString& oldPassword)
 {
    Protos::GUI::ChangePassword passMess;
-   passMess.mutable_new_password()->set_hash(newPassword.getData(), Common::Hash::HASH_SIZE);
+
+   const quint64 newSalt = static_cast<quint64>(mtrand.randInt()) << 32 | mtrand.randInt();
+   Common::Hash newPasswordHashed = Common::Hasher::hashWithSalt(newPassword, newSalt);
+
+   passMess.mutable_new_password()->set_hash(newPasswordHashed.getData(), Common::Hash::HASH_SIZE);
+   passMess.set_new_salt(newSalt);
 
    if (!oldPassword.isNull())
-      passMess.mutable_old_password()->set_hash(oldPassword.getData(), Common::Hash::HASH_SIZE);
+   {
+      Common::Hash oldPasswordHashed = Common::Hasher::hashWithSalt(oldPassword, this->salt);
+      if (!this->connectionInfo.password.isNull() && this->connectionInfo.password != oldPasswordHashed)
+         return false;
 
+      passMess.mutable_old_password()->set_hash(oldPasswordHashed.getData(), Common::Hash::HASH_SIZE);
+   }
+
+   this->connectionInfo.password = newPasswordHashed;
+   this->salt = newSalt;
+
+   this->send(Common::MessageHeader::GUI_CHANGE_PASSWORD, passMess);
+   return true;
+}
+
+void InternalCoreConnection::resetCorePassword()
+{
+   Protos::GUI::ChangePassword passMess;
+   passMess.mutable_new_password()->set_hash(Common::Hash().getData(), Common::Hash::HASH_SIZE);
+   passMess.set_new_salt(0);
    this->send(Common::MessageHeader::GUI_CHANGE_PASSWORD, passMess);
 }
 
-QSharedPointer<IBrowseResult> InternalCoreConnection::browse(const Common::Hash& peerID)
+QSharedPointer<IBrowseResult> InternalCoreConnection::browse(const Common::Hash& peerID, int socketTimeout)
 {
-   QSharedPointer<BrowseResult> browseResult = QSharedPointer<BrowseResult>(new BrowseResult(this, peerID));
+   QSharedPointer<BrowseResult> browseResult = QSharedPointer<BrowseResult>(new BrowseResult(this, peerID, socketTimeout));
    this->browseResultsWithoutTag << browseResult.toWeakRef();
    return browseResult;
 }
 
-QSharedPointer<IBrowseResult> InternalCoreConnection::browse(const Common::Hash& peerID, const Protos::Common::Entry& entry)
+QSharedPointer<IBrowseResult> InternalCoreConnection::browse(const Common::Hash& peerID, const Protos::Common::Entry& entry, int socketTimeout)
 {
-   QSharedPointer<BrowseResult> browseResult = QSharedPointer<BrowseResult>(new BrowseResult(this, peerID, entry));
+   QSharedPointer<BrowseResult> browseResult = QSharedPointer<BrowseResult>(new BrowseResult(this, peerID, entry, socketTimeout));
    this->browseResultsWithoutTag << browseResult.toWeakRef();
    return browseResult;
 }
 
-QSharedPointer<IBrowseResult> InternalCoreConnection::browse(const Common::Hash& peerID, const Protos::Common::Entries& entries, bool withRoots)
+QSharedPointer<IBrowseResult> InternalCoreConnection::browse(const Common::Hash& peerID, const Protos::Common::Entries& entries, bool withRoots, int socketTimeout)
 {
-   QSharedPointer<BrowseResult> browseResult = QSharedPointer<BrowseResult>(new BrowseResult(this, peerID, entries, withRoots));
+   QSharedPointer<BrowseResult> browseResult = QSharedPointer<BrowseResult>(new BrowseResult(this, peerID, entries, withRoots, socketTimeout));
    this->browseResultsWithoutTag << browseResult.toWeakRef();
    return browseResult;
 }
 
-QSharedPointer<ISearchResult> InternalCoreConnection::search(const QString& terms)
+QSharedPointer<ISearchResult> InternalCoreConnection::search(const QString& terms, int socketTimeout)
 {
-   QSharedPointer<SearchResult> searchResult = QSharedPointer<SearchResult>(new SearchResult(this, terms));
+   QSharedPointer<SearchResult> searchResult = QSharedPointer<SearchResult>(new SearchResult(this, terms, socketTimeout));
    this->searchResultsWithoutTag << searchResult.toWeakRef();
    return searchResult;
 }
@@ -193,6 +228,9 @@ void InternalCoreConnection::pauseDownloads(const QList<quint64>& downloadIDs, b
 
 void InternalCoreConnection::moveDownloads(const QList<quint64>& downloadIDRefs, const QList<quint64>& downloadIDs, Protos::GUI::MoveDownloads::Position position)
 {
+   if (downloadIDRefs.isEmpty() || downloadIDs.isEmpty()) // Nothing to do in this case.
+      return;
+
    Protos::GUI::MoveDownloads moveDownloadsMessage;
    for (QListIterator<quint64> i(downloadIDRefs); i.hasNext();)
       moveDownloadsMessage.add_id_ref(i.next());
@@ -254,10 +292,10 @@ void InternalCoreConnection::tryToConnectToTheNextAddress()
    if (address.isNull())
       address = this->addressesToTry.takeFirst();
 
-   // If the address is local check if the core is launched, if not try to launch it.
 #ifndef DEBUG
-   if (address == QHostAddress::LocalHost || address == QHostAddress::LocalHostIPv6)
-         this->coreStatus = CoreController::StartCore();
+   // If the address is local check if the core is launched, if not try to launch it.
+   if (Global::isLocal(address))
+      this->coreStatus = CoreController::StartCore();
 #endif
 
    connect(this->socket, SIGNAL(stateChanged(QAbstractSocket::SocketState)), this, SLOT(stateChanged(QAbstractSocket::SocketState)));
@@ -281,17 +319,7 @@ void InternalCoreConnection::stateChanged(QAbstractSocket::SocketState socketSta
 
    case QAbstractSocket::ConnectedState:
       disconnect(this->socket, SIGNAL(stateChanged(QAbstractSocket::SocketState)), this, SLOT(stateChanged(QAbstractSocket::SocketState)));
-
-      if (this->isLocal())
-      {
-         this->connectedAndAuthenticated();
-      }
-      else
-      {
-         Protos::GUI::Authentication authMessage;
-         authMessage.mutable_password()->set_hash(this->connectionInfo.password.getData(), Common::Hash::HASH_SIZE);
-         this->send(Common::MessageHeader::GUI_AUTHENTICATION, authMessage);
-      }
+      // Now we wait a message 'Protos.GUI.AskForAuthentication' from the Core before being authenticated.
 
    default:;
    }
@@ -301,7 +329,7 @@ void InternalCoreConnection::connectedAndAuthenticated()
 {
    // If we were previously connected we announce it.
    if (this->authenticated)
-      emit disconnected();
+      emit disconnected(this->forcedToClose);
 
    this->authenticated = true;
 
@@ -318,16 +346,34 @@ void InternalCoreConnection::sendCurrentLanguage()
 
 void InternalCoreConnection::onNewMessage(Common::MessageHeader::MessageType type, const google::protobuf::Message& message)
 {
-   if (type != Common::MessageHeader::GUI_AUTHENTICATION_RESULT && !this->authenticated)
+   // While we are not authenticated we accept only two message types.
+   if (!this->authenticated && type != Common::MessageHeader::GUI_ASK_FOR_AUTHENTICATION && type != Common::MessageHeader::GUI_AUTHENTICATION_RESULT)
       return;
 
    switch (type)
    {
+   case Common::MessageHeader::GUI_ASK_FOR_AUTHENTICATION:
+      {
+         const Protos::GUI::AskForAuthentication& askForAuthentication = static_cast<const Protos::GUI::AskForAuthentication&>(message);
+
+         Protos::GUI::Authentication authentication;
+
+         this->salt = askForAuthentication.salt();
+
+         if (!this->password.isEmpty())
+            this->connectionInfo.password = Common::Hasher::hashWithSalt(this->password, this->salt);
+
+         authentication.mutable_password_challenge()->set_hash(Common::Hasher::hashWithSalt(this->connectionInfo.password, askForAuthentication.salt_challenge()).getData(), Common::Hash::HASH_SIZE);
+         this->password.clear();
+         this->send(Common::MessageHeader::GUI_AUTHENTICATION, authentication);
+      }
+      break;
+
    case Common::MessageHeader::GUI_AUTHENTICATION_RESULT:
       {
          const Protos::GUI::AuthenticationResult& authenticationResult = static_cast<const Protos::GUI::AuthenticationResult&>(message);
 
-         if (authenticationResult.status() == Protos::GUI::AuthenticationResult_Status_OK)
+         if (authenticationResult.status() == Protos::GUI::AuthenticationResult::AUTH_OK)
          {
             this->connectedAndAuthenticated();
          }
@@ -335,15 +381,15 @@ void InternalCoreConnection::onNewMessage(Common::MessageHeader::MessageType typ
          {
             switch (authenticationResult.status())
             {
-            case Protos::GUI::AuthenticationResult_Status_PASSWORD_NOT_DEFINED:
+            case Protos::GUI::AuthenticationResult::AUTH_PASSWORD_NOT_DEFINED:
                emit connectingError(ICoreConnection::ERROR_NO_REMOTE_PASSWORD_DEFINED);
                break;
 
-            case Protos::GUI::AuthenticationResult_Status_BAD_PASSWORD:
+            case Protos::GUI::AuthenticationResult::AUTH_BAD_PASSWORD:
                 emit connectingError(ICoreConnection::ERROR_WRONG_PASSWORD);
                break;
 
-            case Protos::GUI::AuthenticationResult_Status_ERROR:
+            case Protos::GUI::AuthenticationResult::AUTH_ERROR:
                emit connectingError(ICoreConnection::ERROR_UNKNOWN);
                break;
 
@@ -436,5 +482,6 @@ void InternalCoreConnection::onNewMessage(Common::MessageHeader::MessageType typ
 void InternalCoreConnection::onDisconnected()
 {
    this->authenticated = false;
-   emit disconnected();
+   emit disconnected(this->forcedToClose);
+   this->forcedToClose = false;
 }

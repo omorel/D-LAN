@@ -51,7 +51,9 @@ SOURCES += priv/Builder.cpp \
     priv/GetHashesResult.cpp \
     priv/Log.cpp \
     priv/Global.cpp \
-    priv/FileUpdater/DirWatcherLinux.cpp
+    priv/FileUpdater/DirWatcherLinux.cpp \
+    priv/Cache/FilePool.cpp \
+    priv/Cache/FileHasher.cpp
 HEADERS += IGetHashesResult.h \
     IFileManager.h \
     IChunk.h \
@@ -82,5 +84,7 @@ HEADERS += IGetHashesResult.h \
     priv/Constants.h \
     priv/GetHashesResult.h \
     priv/Global.h \
-    priv/FileUpdater/DirWatcherLinux.h
+    priv/FileUpdater/DirWatcherLinux.h \
+    priv/Cache/FilePool.h \
+    priv/Cache/FileHasher.h
 OTHER_FILES +=

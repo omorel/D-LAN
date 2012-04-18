@@ -255,11 +255,24 @@ QList< QSharedPointer<IChunk> > Cache::newFile(Protos::Common::Entry& fileEntry)
 
    const QString name = Common::ProtoHelper::getStr(fileEntry, &Protos::Common::Entry::name);
 
-   // If a file with the same name already exists it will be reset.
+   // If a file with the same name already exists we will compare its hashes with the given entry.
    File* file;
    if (file = dir->getFile(name))
    {
-      file->setToUnfinished(fileEntry.size(), hashes);
+      bool resetExistingFile = false;
+      QList< QSharedPointer<Chunk> > existingChunks = file->getChunks();
+      if (existingChunks.size() != fileEntry.chunk_size())
+         resetExistingFile = true;
+      else
+         for (int i = 0; i < existingChunks.size(); i++)
+            if (existingChunks[i]->getHash() != Common::Hash(fileEntry.chunk(i).hash()))
+            {
+               resetExistingFile = true;
+               break;
+            }
+
+      if (resetExistingFile)
+         file->setToUnfinished(fileEntry.size(), hashes);
    }
    else
    {
@@ -276,7 +289,7 @@ QList< QSharedPointer<IChunk> > Cache::newFile(Protos::Common::Entry& fileEntry)
    fileEntry.set_exists(true); // File has been physically created.
    dir->populateEntrySharedDir(&fileEntry); // We set the shared directory.
 
-   // TODO : is there a better way to up cast?
+   // TODO: is there a better way to up cast?
    QList< QSharedPointer<IChunk> > chunks;
    foreach (QSharedPointer<Chunk> chunk, file->getChunks())
       chunks << chunk;

@@ -23,6 +23,8 @@
 
 #include <QList>
 #include <QMultiHash>
+#include <QMultiMap>
+#include <QTime>
 
 #include <Protos/common.pb.h>
 #include <Protos/gui_protocol.pb.h>
@@ -31,6 +33,7 @@
 #include <Common/Hash.h>
 
 #include <IDownload.h>
+#include <IChunkDownload.h>
 #include <priv/DownloadPredicate.h>
 
 namespace PM { class IPeer; }
@@ -40,8 +43,9 @@ namespace DM
    class Download;
    class FileDownload;
 
-   class DownloadQueue
+   class DownloadQueue : public QObject, Common::Uncopyable
    {
+      Q_OBJECT
    public:
       DownloadQueue();
       ~DownloadQueue();
@@ -53,15 +57,23 @@ namespace DM
       void remove(int position);
 
       void peerBecomesAvailable(PM::IPeer* peer);
-      bool isAPeerSource(const Common::Hash& peerID) const;
+      bool isAPeerSource(PM::IPeer* peer) const;
 
       void moveDownloads(const QList<quint64>& downloadIDRefs, const QList<quint64>& downloadIDs, Protos::GUI::MoveDownloads::Position position);
-      bool removeDownloads(DownloadPredicate& predicate);
+      bool removeDownloads(const DownloadPredicate& predicate);
       bool pauseDownloads(QList<quint64> IDs, bool pause = true);
-      bool isEntryAlreadyQueued(const Protos::Common::Entry& localEntry, const Common::Hash& peerSourceID);
+      bool isEntryAlreadyQueued(const Protos::Common::Entry& localEntry);
+
+      void setDownloadAsErroneous(Download* download);
+      Download* getAnErroneousDownload();
+
+      QList< QSharedPointer<IChunkDownload> > getTheOldestUnfinishedChunks(int n);
 
       static Protos::Queue::Queue loadFromFile();
       void saveToFile() const;
+
+   private slots:
+      void fileDownloadTimeChanged(QTime oldTime);
 
    private:
       struct Marker;
@@ -89,7 +101,9 @@ namespace DM
       QList<Marker> markers; ///< Saved some positions like the first downloadable file or the first directory. The goal is to speed up the scan. See the class 'ScanningIterator'.
 
       QList<Download*> downloads;
-      QMultiHash<Common::Hash, Download*> downloadsIndexedBySourcePeerID;
+      QList<Download*> erroneousDownloads;
+      QMultiMap<QTime, FileDownload*> downloadsSortedByTime; // See 'FileDownload::lastTimeGetAllUnfinishedChunks'.
+      QMultiHash<PM::IPeer*, Download*> downloadsIndexedBySourcePeer;
    };
 }
 

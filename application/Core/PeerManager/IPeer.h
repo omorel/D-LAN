@@ -57,6 +57,12 @@ namespace PM
       virtual QHostAddress getIP() const = 0;
       virtual quint16 getPort() const = 0;
       virtual QString getNick() const = 0;
+
+      /**
+        * May return a null QString if version is unknown.
+        */
+      virtual QString getCoreVersion() const = 0;
+
       virtual quint64 getSharingAmount() const = 0;
 
       /**
@@ -106,6 +112,7 @@ namespace PM
 
       /**
         * Ask to download a chunk.
+        * @param deleteLater If you want to use 'QObject::deleteLate()' instead of the simple 'delete'.
         */
       virtual QSharedPointer<IGetChunkResult> getChunk(const Protos::Core::GetChunk& chunk) = 0;
    };

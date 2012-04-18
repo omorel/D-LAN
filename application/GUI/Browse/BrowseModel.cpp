@@ -61,7 +61,7 @@ QModelIndex BrowseModel::index(int row, int column, const QModelIndex& parent) c
    else
        parentTree = static_cast<Tree*>(parent.internalPointer());
 
-   Tree* childTree = dynamic_cast<Tree*>(parentTree->getChild(row));
+   Tree* childTree = parentTree->getChild(row);
 
    if (childTree)
        return this->createIndex(row, column, childTree);
@@ -77,7 +77,7 @@ QModelIndex BrowseModel::parent(const QModelIndex& index) const
        return QModelIndex();
 
    Tree* tree = static_cast<Tree*>(index.internalPointer());
-   Tree* parentItem = dynamic_cast<Tree*>(tree->getParent());
+   Tree* parentItem = tree->getParent();
 
    if (!parentItem || parentItem == this->root)
        return QModelIndex();
@@ -142,11 +142,6 @@ QVariant BrowseModel::data(const QModelIndex& index, int role) const
    }
 }
 
-Common::Tree<Protos::Common::Entry>* BrowseModel::Tree::newTree(const Protos::Common::Entry& entry)
-{
-   return new Tree(entry, this);
-}
-
 Protos::Common::Entry BrowseModel::getEntry(const QModelIndex& index) const
 {
    Tree* tree = static_cast<Tree*>(index.internalPointer());
@@ -178,7 +173,7 @@ void BrowseModel::refresh()
 
    TreeBreadthIterator i(this->root);
    Tree* currentTree;
-   while (currentTree = dynamic_cast<Tree*>(i.next()))
+   while (currentTree = i.next())
       if (currentTree->getNbChildren() > 0)
          entries.add_entry()->CopyFrom(currentTree->getItem());
 
@@ -220,7 +215,7 @@ void BrowseModel::resultRefresh(const google::protobuf::RepeatedPtrField<Protos:
    TreeBreadthIterator i(this->root);
    int j = -1;
    Tree* currentTree;
-   while (currentTree = dynamic_cast<Tree*>(i.next()))
+   while (currentTree = i.next())
       if (currentTree->getNbChildren() > 0)
       {
          if (++j >= entries.size() - 1)
@@ -269,9 +264,8 @@ void BrowseModel::result(const google::protobuf::RepeatedPtrField<Protos::Common
 
 void BrowseModel::resultTimeout()
 {
+   L_WARN("Asking for entries message timedout");
    this->browseResult.clear();
-   this->reset();
-
    emit loadingResultFinished();
 }
 
@@ -315,7 +309,7 @@ QList<BrowseModel::Tree*> BrowseModel::synchronize(BrowseModel::Tree* tree, cons
       }
       else if (j >= entries.entry_size() || tree->getChild(i)->getItem() < entries.entry(j)) // Entry deleted.
       {
-         TreesToDelete << dynamic_cast<Tree*>(tree->getChild(i++));
+         TreesToDelete << tree->getChild(i++);
       }
       else // Entry paths are equal.
       {
@@ -373,7 +367,7 @@ QList<BrowseModel::Tree*> BrowseModel::synchronizeRoot(const Protos::Common::Ent
 
    QList<Tree*> TreesToDelete;
    while (j < this->root->getNbChildren())
-      TreesToDelete << dynamic_cast<Tree*>(this->root->getChild(j++));
+      TreesToDelete << this->root->getChild(j++);
    return TreesToDelete;
 }
 
@@ -398,7 +392,7 @@ BrowseModel::Tree::Tree()
 }
 
 BrowseModel::Tree::Tree(const Protos::Common::Entry& entry, Tree* parent) :
-   Common::Tree<Protos::Common::Entry>(entry, parent)
+   Common::Tree<Protos::Common::Entry, BrowseModel::Tree>(entry, parent)
 {
    this->copySharedDirFromParent();
    if (!this->getItem().shared_dir().has_shared_name())
@@ -422,7 +416,7 @@ void BrowseModel::Tree::insertChildren(const Protos::Common::Entries& entries)
 
 void BrowseModel::Tree::setItem(const Protos::Common::Entry& entry)
 {
-   Common::Tree<Protos::Common::Entry>::setItem(entry);
+   Common::Tree<Protos::Common::Entry, BrowseModel::Tree>::setItem(entry);
    this->copySharedDirFromParent();
 }
 

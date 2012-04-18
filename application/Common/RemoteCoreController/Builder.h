@@ -19,8 +19,8 @@
 #ifndef REMOTECORECONTROLLER_BUILDER_H
 #define REMOTECORECONTROLLER_BUILDER_H
 
-#include "ICoreConnection.h"
-#include "Types.h"
+#include <Common/RemoteCoreController/ICoreConnection.h>
+#include <Common/RemoteCoreController/Types.h>
 
 namespace RCC
 {
@@ -28,6 +28,7 @@ namespace RCC
    {
    public:
       static QSharedPointer<ICoreConnection> newCoreConnection();
+      static QSharedPointer<ICoreConnection> newCoreConnection(int socketTimeout);
 
       static CoreStatus StartCore();
       static void StopCore();

@@ -28,6 +28,8 @@
 #include <QElapsedTimer>
 #include <QLocale>
 
+#include <Libs/MersenneTwister.h>
+
 #include <Protos/gui_protocol.pb.h>
 #include <Protos/common.pb.h>
 
@@ -62,6 +64,7 @@ namespace RCC
       ~InternalCoreConnection();
 
       void connectToCore(const QString& address, quint16 port, Common::Hash password);
+      void connectToCore(const QString& address, quint16 port, const QString& password);
 
       bool isConnected() const;
 
@@ -70,13 +73,14 @@ namespace RCC
       void sendChatMessage(const QString& message);
       void setCoreSettings(const Protos::GUI::CoreSettings settings);
       void setCoreLanguage(const QLocale locale);
-      void setCorePassword(Common::Hash newPassword, Common::Hash oldPassword = Common::Hash());
+      bool setCorePassword(const QString& newPassword, const QString& oldPassword = QString());
+      void resetCorePassword();
 
-      QSharedPointer<IBrowseResult> browse(const Common::Hash& peerID);
-      QSharedPointer<IBrowseResult> browse(const Common::Hash& peerID, const Protos::Common::Entry& entry);
-      QSharedPointer<IBrowseResult> browse(const Common::Hash& peerID, const Protos::Common::Entries& entries, bool withRoots = true);
+      QSharedPointer<IBrowseResult> browse(const Common::Hash& peerID, int socketTimeout);
+      QSharedPointer<IBrowseResult> browse(const Common::Hash& peerID, const Protos::Common::Entry& entry, int socketTimeout);
+      QSharedPointer<IBrowseResult> browse(const Common::Hash& peerID, const Protos::Common::Entries& entries, bool withRoots, int socketTimeout);
 
-      QSharedPointer<ISearchResult> search(const QString& terms);
+      QSharedPointer<ISearchResult> search(const QString& terms, int socketTimeout);
 
       void download(const Common::Hash& peerID, const Protos::Common::Entry& entry);
       void download(const Common::Hash& peerID, const Protos::Common::Entry& entry, const Common::Hash& sharedFolderID, const QString& path = "/");
@@ -92,7 +96,7 @@ namespace RCC
    signals:
       void connectingError(RCC::ICoreConnection::ConnectionErrorCode code);
       void connected();
-      void disconnected();
+      void disconnected(bool asked); // 'asked' = true if disconnected by 'disconnectFromCore()'.
 
       void newState(const Protos::GUI::State&);
       void newChatMessages(const Protos::GUI::EventChatMessages&);
@@ -132,7 +136,15 @@ namespace RCC
 
       QList< QWeakPointer<BrowseResult> > browseResultsWithoutTag;
       QList< QWeakPointer<SearchResult> > searchResultsWithoutTag;
+
       bool authenticated;
+      bool forcedToClose;
+
+      // Temporary text password. Once we got the salt sent by the Core we set 'connectionInfo.password' with the salted password and we erase this member.
+      QString password;
+      quint64 salt;
+
+      MTRand mtrand;
    };
 }
 

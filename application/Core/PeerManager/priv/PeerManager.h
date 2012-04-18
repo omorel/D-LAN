@@ -34,6 +34,7 @@
 #include <IPeerManager.h>
 #include <Common/LogManager/ILogger.h>
 #include <priv/Peer.h>
+#include <priv/PeerSelf.h>
 #include <priv/Log.h>
 
 namespace PM
@@ -55,19 +56,20 @@ namespace PM
       PeerManager(QSharedPointer<FM::IFileManager> fileManager);
       ~PeerManager();
 
-      Common::Hash getID();
       void setNick(const QString& nick);
-      QString getNick();
 
+      IPeer* getSelf();
       QList<IPeer*> getPeers();
+
       IPeer* getPeer(const Common::Hash& ID);
       Peer* getPeer_(const Common::Hash& ID);
       IPeer* createPeer(const Common::Hash& ID, const QString& nick);
 
-      void updatePeer(const Common::Hash& ID, const QHostAddress& IP, quint16 port, const QString& nick, const quint64& sharingAmount);
+      void updatePeer(const Common::Hash& ID, const QHostAddress& IP, quint16 port, const QString& nick, const quint64& sharingAmount, const QString& coreVersion);
+      void removeAllPeers();
       void newConnection(QTcpSocket* tcpSocket);
 
-      void onGetChunk(QSharedPointer<FM::IChunk> chunk, int offset, QSharedPointer<Socket> socket);
+      void onGetChunk(QSharedPointer<FM::IChunk> chunk, int offset, QSharedPointer<PeerMessageSocket> socket);
 
    private slots:
       void dataReceived(QTcpSocket* tcpSocket = 0);
@@ -82,9 +84,8 @@ namespace PM
 
       QSharedPointer<FM::IFileManager> fileManager;
 
-      Common::Hash ID;
-      QString nick;
-      QList<Peer*> peers;
+      PeerSelf* self; // Ourself.
+      QList<Peer*> peers; // The other peers.
 
       QTimer timer; ///< Used to check periodically if some pending sockets have timeouted.
       QList<PendingSocket> pendingSockets;

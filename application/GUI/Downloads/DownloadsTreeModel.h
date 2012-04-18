@@ -30,6 +30,7 @@ namespace GUI
    class DownloadsTreeModel : public DownloadsModel
    {
       Q_OBJECT
+
    public:
       DownloadsTreeModel(QSharedPointer<RCC::ICoreConnection> coreConnection, const PeerListModel& peerListModel, const DirListModel& sharedDirsModel, const IFilter<DownloadFilterStatus>& filter);
       ~DownloadsTreeModel();
@@ -39,11 +40,12 @@ namespace GUI
       bool isDownloadPaused(const QModelIndex& index) const;
       bool isFileLocationKnown(const QModelIndex& index) const;
       bool isFileComplete(const QModelIndex& index) const;
+      bool isSourceAlive(const QModelIndex& index) const;
+      Protos::Common::Entry::Type getType(const QModelIndex& index) const;
 
       QString getPath(const QModelIndex& index, bool appendFilename = true) const;
 
       int rowCount(const QModelIndex& parent = QModelIndex()) const;
-      int columnCount(const QModelIndex& parent = QModelIndex()) const;
       QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const;
       QModelIndex index(int row, int column, const QModelIndex& parent = QModelIndex()) const;
       QModelIndex parent(const QModelIndex& index) const;
@@ -51,36 +53,35 @@ namespace GUI
       Qt::ItemFlags flags(const QModelIndex& index) const;
 
    protected:
-      bool dropMimeData(const QMimeData* data, Qt::DropAction action, int row, int column, const QModelIndex& parent);
+      bool dropMimeData(const QMimeData* data, Qt::DropAction action, int where, int column, const QModelIndex& parent);
 
    protected slots:
       void onNewState(const Protos::GUI::State& state);
 
    private:
-      class Tree : public Common::Tree<Protos::GUI::State::Download>
+      class Tree : public Common::Tree<Protos::GUI::State::Download, Tree>
       {
       public:
          Tree();
          Tree(const Protos::GUI::State::Download& download, Tree* parent);
 
-      protected:
-         virtual Common::Tree<Protos::GUI::State::Download>* newTree(const Protos::GUI::State::Download& download);
-
-      public: // Fuck you encapsulation.
-         bool toDelete;
+         bool visited;
          int nbPausedFiles;
          int nbErrorFiles;
          int nbDownloadingFiles;
       };
 
-      Tree* insertDirectory(Tree* tree, const QString& dir, const QString& peerSourceNick, const Hash& sharedDirID);
+      QList<quint64> getDownloadIDs(Tree* tree) const;
+      Tree* insertDirectory(Tree* parentTree, const QString& dir, const QString& peerSourceNick, const Common::Hash& peerSourceID, const Hash& sharedDirID);
       Tree* insert(Tree* tree, const Protos::GUI::State::Download& download);
+      Tree* createEntry(const QModelIndex& parent, int position, const Protos::GUI::State::Download& download);
 
+      Tree* moveUp(Tree* tree);
       Tree* update(Tree* tree, const Protos::GUI::State::Download& download);
       Tree* updateDirectoriesEntryDeleted(Tree* file, const Protos::GUI::State::Download& oldDownload);
       Tree* updateDirectoriesNewFile(Tree* file);
       Tree* updateDirectoriesFileModified(Tree* file, const Protos::GUI::State::Download& oldDownload);
-      Tree* updateDirectories(Tree* file, quint64 fileSizeDelta, quint64 fileDownloadedBytesDelta, Protos::GUI::State_Download::Status oldStatus = Protos::GUI::State::Download::QUEUED);
+      Tree* updateDirectories(Tree* file, quint64 fileSizeDelta, quint64 fileDownloadedBytesDelta, Protos::GUI::State::Download::Status oldStatus = Protos::GUI::State::Download::QUEUED);
 
       Tree* root;
       QHash<int, Tree*> indexedFiles;

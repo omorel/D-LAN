@@ -23,6 +23,8 @@
 
 #include <Common/Hash.h>
 
+#include <Common/RemoteCoreController/ICoreConnection.h>
+
 namespace Ui {
    class AskNewPasswordDialog;
 }
@@ -34,19 +36,15 @@ namespace GUI
       Q_OBJECT
 
    public:
-      explicit AskNewPasswordDialog(const Common::Hash& oldPassword, QWidget* parent = 0);
+      AskNewPasswordDialog(QSharedPointer<RCC::ICoreConnection> coreConnection, bool askOldPassword, QWidget* parent = 0);
       ~AskNewPasswordDialog();
-
-      Common::Hash getNewPassword() const;
-      Common::Hash getOldPassword() const;
 
    private slots:
       void ok();
 
    private:
       Ui::AskNewPasswordDialog* ui;
-
-      Common::Hash oldPassword;
+      QSharedPointer<RCC::ICoreConnection> coreConnection;
    };
 }
 

@@ -63,15 +63,21 @@ namespace DM
 
       quint64 getID() const;
       Status getStatus() const;
+
       bool isStatusErroneous() const;
+
       virtual quint64 getDownloadedBytes() const;
       PM::IPeer* getPeerSource() const;
       QSet<Common::Hash> getPeers() const;
+
       const Protos::Common::Entry& getRemoteEntry() const;
       const Protos::Common::Entry& getLocalEntry() const;
 
       void setAsDeleted();
       virtual void remove();
+
+   signals:
+      void becomeErroneous(Download*);
 
    public slots:
       virtual bool updateStatus();

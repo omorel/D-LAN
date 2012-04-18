@@ -1,4 +1,3 @@
-
 CONFIG(debug, debug|release) {
    FOLDER = debug
    DEFINES += DEBUG
@@ -10,6 +9,14 @@ CONFIG(debug, debug|release) {
       QMAKE_LFLAGS_RELEASE -= -Wl,-s
    }
 }
+
+# C++11 is disable because of a segfaulting of GCC 4.4 on Windows
+#win32 {
+   # For mingw32.
+   # QMAKE_CXXFLAGS += -std=gnu++0x
+#} else {
+   # QMAKE_CXXFLAGS += -std=c++0x
+#}
 
 DESTDIR = output/$$FOLDER
 MOC_DIR = .tmp/$$FOLDER

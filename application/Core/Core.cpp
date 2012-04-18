@@ -37,7 +37,7 @@ LOG_INIT_CPP(Core);
 Core::Core(bool resetSettings, QLocale locale)
 {
    GOOGLE_PROTOBUF_VERIFY_VERSION;
-   SETTINGS.setFilename(Common::CORE_SETTINGS_FILENAME);
+   SETTINGS.setFilename(Common::Constants::CORE_SETTINGS_FILENAME);
    SETTINGS.setSettingsMessage(new Protos::Core::Settings());
    SETTINGS.load();
 
@@ -60,11 +60,11 @@ Core::Core(bool resetSettings, QLocale locale)
             Common::Global::setDataFolder(Common::Global::ROAMING, roamingSystem);
          }
 
-         if (resetSettings && SETTINGS.load())
+         if (SETTINGS.load() && resetSettings)
          {
             const QString nick = SETTINGS.get<QString>("nick");
             const Common::Hash peerID = SETTINGS.get<Common::Hash>("peer_id");
-            SETTINGS.saveTo(Common::CORE_SETTINGS_FILENAME + ".backup");
+            SETTINGS.saveTo(Common::Constants::CORE_SETTINGS_FILENAME + ".backup");
             SETTINGS.rmAll();
             SETTINGS.set("nick", nick);
             SETTINGS.set("peer_id", peerID);
@@ -114,11 +114,11 @@ void Core::setLanguage(QLocale locale, bool load)
 {
    if (load)
    {
-      Common::Languages languages(QCoreApplication::applicationDirPath() + "/" + LANGUAGE_DIRECTORY);
+      Common::Languages languages(QCoreApplication::applicationDirPath() + "/" + Common::Constants::LANGUAGE_DIRECTORY);
       Common::Language lang = languages.getBestMatchLanguage(Common::Languages::CORE, locale);
       SETTINGS.set("language", lang.locale);
       SETTINGS.save();
-      this->translator.load(lang.filename, QCoreApplication::applicationDirPath() + "/" + LANGUAGE_DIRECTORY);
+      this->translator.load(lang.filename, QCoreApplication::applicationDirPath() + "/" + Common::Constants::LANGUAGE_DIRECTORY);
    }
    else
    {
@@ -177,7 +177,6 @@ void Core::checkSettingsIntegrity()
    this->checkSetting("multicast_ttl", 1u, 255u);
    this->checkSetting("max_udp_datagram_size", 255u, 65535u);
    this->checkSetting("udp_read_buffer_size", 255u, 6684672u);
-   this->checkSetting("number_of_hashes_sent_imalive", 1u, 1000u);
    this->checkSetting("max_number_of_search_result_to_send", 1u, 10000u);
    this->checkSetting("max_number_of_result_shown", 1u, 100000u);
    this->checkSetting("max_number_of_chat_message_saved", 1u, 1000000u);

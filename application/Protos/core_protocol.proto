@@ -11,7 +11,7 @@ package Protos.Core;
 /***** Multicast UDP messages. *****/
 // Im alive.
 // This message is sent periodically to all other peers (for example each 10s).
-// It send an array of hash chunks to know which one has which chunk.
+// It contains an array of hash chunks to know which peer has which chunk.
 // If a peer owns one or more chunk corresponding to the given hashes then it
 // will reply with a 'ChunksOwned' message.
 // These hashes can come from different files.
@@ -20,6 +20,8 @@ package Protos.Core;
 // id : 0x01
 message IMAlive {
    required uint32 version = 1; // The version of the protocol used. If 'version' from another peer doesn't correspond to our own version, this peer is ignored.
+   optional string core_version = 9; // The core version, for example: "Version: 1.1.4 (Linux)".
+   
    required uint32 port = 2; // The port listened by the core.
    required string nick = 3;
    
@@ -120,6 +122,7 @@ message GetChunkResult {
       DONT_HAVE = 1; // 'b' doesn't have this chunk.
       ALREADY_DOWNLOADING = 2; // If 'a' is already downloading a chunk from 'b'.
       TOO_MANY_CONNECTIONS = 3;
+      DONT_HAVE_DATA_FROM_OFFSET = 4; // If we have the chunk but we don't have the data from the given offset.
       ERROR_UNKNOWN = 255;
    }
    required Status status = 1;

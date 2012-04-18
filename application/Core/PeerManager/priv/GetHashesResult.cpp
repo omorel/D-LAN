@@ -23,15 +23,9 @@ using namespace PM;
 
 #include <priv/Log.h>
 
-GetHashesResult::GetHashesResult(const Protos::Common::Entry& file, QSharedPointer<Socket> socket) :
+GetHashesResult::GetHashesResult(const Protos::Common::Entry& file, QSharedPointer<PeerMessageSocket> socket) :
    IGetHashesResult(SETTINGS.get<quint32>("get_hashes_timeout")), file(file), socket(socket)
 {
-}
-
-GetHashesResult::~GetHashesResult()
-{
-   disconnect(this->socket.data(), SIGNAL(newMessage(Common::MessageHeader::MessageType, const google::protobuf::Message&)), this, SLOT(newMessage(Common::MessageHeader::MessageType, const google::protobuf::Message&)));
-   this->socket->finished();
 }
 
 void GetHashesResult::start()
@@ -41,6 +35,14 @@ void GetHashesResult::start()
    connect(this->socket.data(), SIGNAL(newMessage(Common::MessageHeader::MessageType, const google::protobuf::Message&)), this, SLOT(newMessage(Common::MessageHeader::MessageType, const google::protobuf::Message&)), Qt::DirectConnection);
    socket->send(Common::MessageHeader::CORE_GET_HASHES, message);
    this->startTimer();
+}
+
+void GetHashesResult::doDeleteLater()
+{
+   disconnect(this->socket.data(), SIGNAL(newMessage(Common::MessageHeader::MessageType, const google::protobuf::Message&)), this, SLOT(newMessage(Common::MessageHeader::MessageType, const google::protobuf::Message&)));
+   this->socket->finished();
+   this->socket.clear();
+   this->deleteLater();
 }
 
 void GetHashesResult::newMessage(Common::MessageHeader::MessageType type, const google::protobuf::Message& message)

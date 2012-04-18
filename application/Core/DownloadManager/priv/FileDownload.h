@@ -21,6 +21,7 @@
 
 #include <QList>
 #include <QSharedPointer>
+#include <QTime>
 
 #include <Libs/MersenneTwister.h>
 
@@ -34,6 +35,7 @@
 #include <Protos/common.pb.h>
 
 #include <priv/OccupiedPeers.h>
+#include <priv/LinkedPeers.h>
 #include <priv/Download.h>
 #include <priv/ChunkDownload.h>
 
@@ -46,7 +48,7 @@ namespace DM
    public:
       FileDownload(
          QSharedPointer<FM::IFileManager> fileManager,
-         QSharedPointer<PM::IPeerManager> peerManager,
+         LinkedPeers& linkedPeers,
          OccupiedPeers& occupiedPeersAskingForHashes,
          OccupiedPeers& occupiedPeersDownloadingChunk,
          Common::ThreadPool& threadPool,
@@ -72,7 +74,9 @@ namespace DM
 
       QSharedPointer<ChunkDownload> getAChunkToDownload();
 
-      void getUnfinishedChunks(QList< QSharedPointer<IChunkDownload> >& chunks, int nMax) const;
+      void getUnfinishedChunks(QList< QSharedPointer<IChunkDownload> >& chunks, int nMax);
+
+      QTime getLastTimeGetAllUnfinishedChunks() const;
 
       void remove();
 
@@ -82,6 +86,7 @@ namespace DM
 
    signals:
       void newHashKnown();
+      void lastTimeGetAllUnfinishedChunksChanged(QTime oldTime);
 
    private slots:
       void retryToRetrieveHashes();
@@ -92,15 +97,13 @@ namespace DM
       void chunkDownloadStarted();
       void chunkDownloadFinished();
 
-   protected:
-      void setStatus(Status newStatus);
-
    private:
       bool tryToLinkToAnExistingFile();
       void connectChunkDownloadSignals(QSharedPointer<ChunkDownload> chunkDownload);
+      void reset();
 
       QSharedPointer<FM::IFileManager> fileManager;
-      QSharedPointer<PM::IPeerManager> peerManager;
+      LinkedPeers& linkedPeers;
 
       const int NB_CHUNK;
 
@@ -116,6 +119,8 @@ namespace DM
       QSharedPointer<PM::IGetHashesResult> getHashesResult;
 
       Common::TransferRateCalculator& transferRateCalculator;
+
+      QTime lastTimeGetAllUnfinishedChunks; // Updated when ALL hashes are send via the method 'getTheFirstUnfinishedChunks(..)'. Null if never.
    };
 }
 #endif

@@ -32,9 +32,10 @@ using namespace RCC;
 #include <priv/BrowseResult.h>
 #include <priv/SearchResult.h>
 
-CoreConnection::CoreConnection() :
+CoreConnection::CoreConnection(int socketTimeout) :
    currentConnected(0),
-   connectingInProgress(false)
+   connectingInProgress(false),
+   SOCKET_TIMEOUT(socketTimeout)
 {
 }
 
@@ -54,25 +55,15 @@ void CoreConnection::connectToCore(quint16 port)
 
 void CoreConnection::connectToCore(const QString& address, quint16 port, Common::Hash password)
 {
-   emit connecting();
-
-   if (this->connectingInProgress)
-   {
-      this->tempConnectingError(ERROR_CONNECTING_IN_PROGRESS);
+   if (!this->connectToCorePrepare(address))
       return;
-   }
+   this->temp()->connectToCore(address, port, password);
+}
 
-   this->connectingInProgress = true;
-
-   if (address.isNull() || address.isEmpty())
-   {
-      this->tempConnectingError(ERROR_INVALID_ADDRESS);
+void CoreConnection::connectToCore(const QString& address, quint16 port, const QString& password)
+{
+   if (!this->connectToCorePrepare(address))
       return;
-   }
-
-   connect(this->temp(), SIGNAL(connectingError(RCC::ICoreConnection::ConnectionErrorCode)), this, SLOT(tempConnectingError(RCC::ICoreConnection::ConnectionErrorCode)));
-   connect(this->temp(), SIGNAL(connected()), this, SLOT(tempConnected()));
-   connect(this->temp(), SIGNAL(disconnected()), this, SLOT(tempDisconnected()));
    this->temp()->connectToCore(address, port, password);
 }
 
@@ -117,31 +108,36 @@ void CoreConnection::setCoreLanguage(const QLocale locale)
    this->current()->setCoreLanguage(locale);
 }
 
-void CoreConnection::setCorePassword(Hash newPassword, Hash oldPassword)
+bool CoreConnection::setCorePassword(const QString& newPassword, const QString& oldPassword)
 {
-   this->current()->setCorePassword(newPassword, oldPassword);
+   return this->current()->setCorePassword(newPassword, oldPassword);
+}
+
+void CoreConnection::resetCorePassword()
+{
+   this->current()->resetCorePassword();
 }
 
 QSharedPointer<IBrowseResult> CoreConnection::browse(const Common::Hash& peerID)
 {
-   return this->current()->browse(peerID);
+   return this->current()->browse(peerID, this->SOCKET_TIMEOUT);
 }
 
 QSharedPointer<IBrowseResult> CoreConnection::browse(const Common::Hash& peerID, const Protos::Common::Entry& entry)
 {
 
-   return this->current()->browse(peerID, entry);
+   return this->current()->browse(peerID, entry, this->SOCKET_TIMEOUT);
 }
 
 QSharedPointer<IBrowseResult> CoreConnection::browse(const Common::Hash& peerID, const Protos::Common::Entries& entries, bool withRoots)
 {
 
-   return this->current()->browse(peerID, entries, withRoots);
+   return this->current()->browse(peerID, entries, withRoots, this->SOCKET_TIMEOUT);
 }
 
 QSharedPointer<ISearchResult> CoreConnection::search(const QString& terms)
 {
-   return this->current()->search(terms);
+   return this->current()->search(terms, this->SOCKET_TIMEOUT);
 }
 
 void CoreConnection::download(const Common::Hash& peerID, const Protos::Common::Entry& entry)
@@ -217,7 +213,7 @@ void CoreConnection::tempConnected()
 
    this->swap();
 
-   connect(this->current(), SIGNAL(disconnected()), this, SIGNAL(disconnected()));
+   connect(this->current(), SIGNAL(disconnected(bool)), this, SIGNAL(disconnected(bool)));
    connect(this->current(), SIGNAL(newState(const Protos::GUI::State&)), this, SIGNAL(newState(const Protos::GUI::State&)));
    connect(this->current(), SIGNAL(newChatMessages(const Protos::GUI::EventChatMessages&)), this, SIGNAL(newChatMessages(const Protos::GUI::EventChatMessages&)));
    connect(this->current(), SIGNAL(newLogMessage(QSharedPointer<const LM::IEntry>)), this, SIGNAL(newLogMessage(QSharedPointer<const LM::IEntry>)));
@@ -228,6 +224,34 @@ void CoreConnection::tempDisconnected()
 {
    if (this->connectingInProgress)
       this->tempConnectingError(ERROR_HOST_TIMEOUT);
+}
+
+/**
+  * @return true is no error.
+  */
+bool CoreConnection::connectToCorePrepare(const QString& address)
+{
+   emit connecting();
+
+   if (this->connectingInProgress)
+   {
+      this->tempConnectingError(ERROR_CONNECTING_IN_PROGRESS);
+      return false;
+   }
+
+   this->connectingInProgress = true;
+
+   if (address.isNull() || address.isEmpty())
+   {
+      this->tempConnectingError(ERROR_INVALID_ADDRESS);
+      return false;
+   }
+
+   connect(this->temp(), SIGNAL(connectingError(RCC::ICoreConnection::ConnectionErrorCode)), this, SLOT(tempConnectingError(RCC::ICoreConnection::ConnectionErrorCode)));
+   connect(this->temp(), SIGNAL(connected()), this, SLOT(tempConnected()));
+   connect(this->temp(), SIGNAL(disconnected(bool)), this, SLOT(tempDisconnected()));
+
+   return true;
 }
 
 InternalCoreConnection* CoreConnection::current()

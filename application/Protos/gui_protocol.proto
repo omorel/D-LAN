@@ -42,12 +42,18 @@ message State {
          NO_ENOUGH_FREE_SPACE = 0x21;
          UNABLE_TO_CREATE_THE_FILE = 0x22;
          UNABLE_TO_RETRIEVE_THE_HASHES = 0x23;
+         
          TRANSFERT_ERROR = 0x24;
+         UNABLE_TO_OPEN_THE_FILE = 0x25;
+         FILE_IO_ERROR = 0x26;
+         FILE_NON_EXISTENT = 0x27;
+         GOT_TOO_MUCH_DATA = 0x28;
+         HASH_MISSMATCH = 0x29;
       }
       required uint64 id = 1; // Cannot be 0.
       
       // When the entry is physically created, Common.Entry.exists is set to true.
-      // The hashes are never sent to save a bit of bandwith.
+      // The hashes are never sent to save a bit of bandwidth.
       required Common.Entry local_entry = 2;
       
       required Status status = 3;
@@ -58,7 +64,7 @@ message State {
    }
    message Upload {
       required uint64 id = 1;
-      required Common.Entry file = 2;
+      required Common.Entry file = 2; // As the download, the hashes aren't sent to save bandwidth.
       required uint32 current_part = 3;
       required uint32 nb_part = 4;
       required uint32 progress = 5; // 0 to 10000.
@@ -82,6 +88,7 @@ message State {
       required string nick = 2;
       required uint64 sharing_amount = 3; // [byte].
       optional Common.IP ip = 4;
+      optional string core_version = 5;
    }
    message SharedDir {
       required Common.Hash id = 1;
@@ -97,9 +104,7 @@ message State {
    
    required bool integrity_check_enabled = 7;
    
-   // Re-hashed hashed password.
-   // Not set if the password has never been set (initial state).
-   optional Common.Hash current_password = 10;
+   optional bool password_defined = 10 [default = false];
       
    repeated Download download = 4;
    repeated Upload upload = 5;
@@ -147,24 +152,31 @@ message EventLogMessage {
 }
 
 /***** Commands. *****/
-// GUI -> Core
-// id : 0x21
 // Authentication.
-// Must be send for non-local connection as the first message.
+// Always send by the core when a new connection is established.
 // All other messages can't be sent or received without a proper authentication.
-// Authentication tries from a local connection will be ignored by the core.
+// A new salt is randomly generated each time a new connection is created.
+// Core -> GUI
+// id : 0x21
+message AskForAuthentication {
+   required uint64 salt = 1;
+   required uint64 salt_challenge = 2;
+}
+// Password is optional for local connections.
+// GUI -> Core
+// id : 0x22
 message Authentication {
-   required Common.Hash password = 1; // A salt should be added.
+   optional Common.Hash password_challenge = 1; // hash(password) + old_salt + salt_challenge
 }
 // Core -> GUI
-// id : 0x22
+// id : 0x23
 // If BAD_PASSWORD the core should wait a bit before sending the result (for example 1s) to avoid dictionary attack.
 message AuthenticationResult {
    enum Status {
-      OK = 0x01;
-      BAD_PASSWORD = 0x02;
-      PASSWORD_NOT_DEFINED = 0x03; // The core doesn't have defined a password (empty password).
-      ERROR = 0xFF;
+      AUTH_OK = 0x01;
+      AUTH_BAD_PASSWORD = 0x02;
+      AUTH_PASSWORD_NOT_DEFINED = 0x03; // The core doesn't have defined a password (empty password).
+      AUTH_ERROR = 0xFF;
    }
    required Status status = 1;
 }
@@ -176,13 +188,16 @@ message Language {
    required Common.Language language = 1;
 }
 
-
 // GUI -> Core
 // id : 0xD1
 // Change the core password.
+// Both sent passwords are salted with 'AskForAuthentication.new_salt'.
+// If 'new_password' is set to a null hash, the password is removed, in this case the old password isn't needed.
 message ChangePassword {
-   required Common.Hash new_password = 1;
-   optional Common.Hash old_password = 2; // Only if a password has already been set.
+   required Common.Hash new_password = 1; // Salted with the new salt.
+   required uint64 new_salt = 2;
+   
+   optional Common.Hash old_password = 3; // Salted with the old salt. Required only if a password has already been set. 'See State.password_defined'.
 }
 
 // GUI -> Core

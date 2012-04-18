@@ -114,7 +114,7 @@ QSize SearchDelegate::sizeHint(const QStyleOptionViewItem& option, const QModelI
          QTextDocument doc;
          doc.setHtml(this->toHtmlText(optionV4.text));
          //doc.setTextWidth(optionV4.rect.width());
-         return QSize(doc.idealWidth() + 20, doc.size().height()); // + 20 is for the icon, TODO : find a better way to obtain this value.
+         return QSize(doc.idealWidth() + 20, doc.size().height()); // + 20 is for the icon, TODO: find a better way to obtain this value.
       }
       break;
 
@@ -316,7 +316,7 @@ void WidgetSearch::progress(int value)
    this->ui->prgSearch->setValue(value);
    const int nbFolders = this->searchModel.getNbFolders();
    const int nbFiles = this->searchModel.getNbFiles();
-   this->ui->prgSearch->setFormat(QString("%1 folder%2 / %3 file%4").arg(nbFolders).arg(nbFolders > 1 ? "s" : "").arg(nbFiles).arg(nbFiles > 1 ? "s" : ""));
+   this->ui->prgSearch->setFormat(QString("%1 director%2 / %3 file%4").arg(nbFolders).arg(nbFolders > 1 ? "ies" : "y").arg(nbFiles).arg(nbFiles > 1 ? "s" : ""));
 }
 
 void WidgetSearch::treeviewSelectionChanged(const QItemSelection& selected, const QItemSelection& deselected)

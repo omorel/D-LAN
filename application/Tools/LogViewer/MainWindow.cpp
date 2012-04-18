@@ -16,8 +16,8 @@
   * along with this program.  If not, see <http://www.gnu.org/licenses/>.
   */
   
-#include "MainWindow.h"
-#include "ui_MainWindow.h"
+#include <MainWindow.h>
+#include <ui_MainWindow.h>
 
 #include <QFileDialog>
 #include <QFileInfo>
@@ -33,19 +33,25 @@ MainWindow::MainWindow(QWidget *parent) :
    currentFile(0)
 {
    this->ui->setupUi(this);
+
    connect(this->ui->actOpen, SIGNAL(activated()), this, SLOT(openDir()));
    connect(this->ui->butFilterAll, SIGNAL(clicked()), this, SLOT(checkAll()));
    connect(this->ui->butRefresh, SIGNAL(clicked()), this, SLOT(reloadAll()));
 
    this->currentDir.setSorting(QDir::Name);
-
-   this->ui->tblLog->horizontalHeader()->setResizeMode(QHeaderView::ResizeToContents);
-   this->ui->tblLog->verticalHeader()->setResizeMode(QHeaderView::ResizeToContents);
-   //this->ui->tblLog->verticalHeader()->setResizeMode(QHeaderView::Custom);
-   this->ui->tblLog->verticalHeader()->setDefaultSectionSize(17);
-   this->ui->tblLog->setWordWrap(true);
+   this->ui->tblLog->setWordWrap(false);
    this->ui->tblLog->setModel(&this->model);
    this->ui->tblLog->setItemDelegate(new TableLogItemDelegate(this));
+
+   this->ui->tblLog->horizontalHeader()->setResizeMode(QHeaderView::Interactive);
+   this->ui->tblLog->horizontalHeader()->resizeSection(0, 140);
+   this->ui->tblLog->horizontalHeader()->resizeSection(1, 50);
+   this->ui->tblLog->horizontalHeader()->resizeSection(2, 140);
+   this->ui->tblLog->horizontalHeader()->resizeSection(3, 50);
+   this->ui->tblLog->horizontalHeader()->resizeSection(4, 180);
+   this->ui->tblLog->horizontalHeader()->resizeSection(5, 1200);
+   this->ui->tblLog->verticalHeader()->setResizeMode(QHeaderView::Fixed);
+   this->ui->tblLog->verticalHeader()->setDefaultSectionSize(17);
    this->ui->tblLog->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
 
    this->severities = new TooglableList(this);
@@ -132,7 +138,7 @@ void MainWindow::filtersChange()
    if (this->disableRefreshFilters)
       return;
 
-   // TODO : find a better way to avoid slowing down.
+   // TODO: find a better way to avoid slowing down.
    this->ui->tblLog->verticalHeader()->setResizeMode(QHeaderView::Custom);
    for (int i = 0; i < this->model.rowCount(); i++)
       this->filterRow(i);
@@ -260,13 +266,12 @@ void MainWindow::refreshFilters()
    this->modules->setList(this->model.getModules());
    this->threads->setList(this->model.getThreads());
 }
-#include <QDebug>
+
 /**
   * Hide or show the given row depending the current filters.
   */
 void MainWindow::filterRow(int r)
 {
-   qDebug() << "MainWindow::filterRow : " << r;
    if (this->model.isFiltered(r, this->severities->getList(), this->modules->getList(), this->threads->getList()))
       this->ui->tblLog->hideRow(r);
    else

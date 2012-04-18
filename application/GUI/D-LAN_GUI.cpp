@@ -20,6 +20,7 @@
 using namespace GUI;
 
 #include <Common/Constants.h>
+#include <Common/Settings.h>
 
 #include <Common/RemoteCoreController/Builder.h>
 
@@ -32,7 +33,7 @@ using namespace GUI;
 D_LAN_GUI::D_LAN_GUI(int argc, char *argv[]) :
    QApplication(argc, argv),
    mainWindow(0),
-   coreConnection(RCC::Builder::newCoreConnection()),
+   coreConnection(RCC::Builder::newCoreConnection(SETTINGS.get<quint32>("socket_timeout"))),
    trayIcon(QIcon(":/icons/ressources/icon.png"))
 {
    this->setQuitOnLastWindowClosed(false);
@@ -64,7 +65,9 @@ void D_LAN_GUI::trayIconActivated(QSystemTrayIcon::ActivationReason reason)
 
 void D_LAN_GUI::mainWindowClosed()
 {
-   this->trayIcon.showMessage("D-LAN GUI closed", "D-LAN Core is still running in background. Select 'exit' from the contextual menu if you want to stop it.");
+   if (this->coreConnection->isConnected())
+      this->trayIcon.showMessage("D-LAN GUI closed", "D-LAN Core is still running in background. Select 'exit' from the contextual menu if you want to stop it.");
+   this->coreConnection->disconnectFromCore();
    this->mainWindow = 0;
 }
 
@@ -74,6 +77,7 @@ void D_LAN_GUI::showMainWindow()
    {
       this->mainWindow->setWindowState(Qt::WindowActive);
       this->mainWindow->raise();
+      this->mainWindow->activateWindow();
    }
    else
    {

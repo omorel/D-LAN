@@ -23,14 +23,9 @@ using namespace PM;
 
 #include <priv/Log.h>
 
-GetEntriesResult::GetEntriesResult(const Protos::Core::GetEntries& dirs, QSharedPointer<Socket> socket) :
+GetEntriesResult::GetEntriesResult(const Protos::Core::GetEntries& dirs, QSharedPointer<PeerMessageSocket> socket) :
    IGetEntriesResult(SETTINGS.get<quint32>("socket_timeout")), dirs(dirs), socket(socket)
 {
-}
-
-GetEntriesResult::~GetEntriesResult()
-{
-   disconnect(this->socket.data(), SIGNAL(newMessage(Common::MessageHeader::MessageType, const google::protobuf::Message&)), this, SLOT(newMessage(Common::MessageHeader::MessageType, const google::protobuf::Message&)));
 }
 
 void GetEntriesResult::start()
@@ -38,6 +33,14 @@ void GetEntriesResult::start()
    connect(this->socket.data(), SIGNAL(newMessage(Common::MessageHeader::MessageType, const google::protobuf::Message&)), this, SLOT(newMessage(Common::MessageHeader::MessageType, const google::protobuf::Message&)), Qt::DirectConnection);
    socket->send(Common::MessageHeader::CORE_GET_ENTRIES, this->dirs);
    this->startTimer();
+}
+
+void GetEntriesResult::doDeleteLater()
+{
+   disconnect(this->socket.data(), SIGNAL(newMessage(Common::MessageHeader::MessageType, const google::protobuf::Message&)), this, SLOT(newMessage(Common::MessageHeader::MessageType, const google::protobuf::Message&)));
+   this->socket->finished();
+   this->socket.clear();
+   this->deleteLater();
 }
 
 void GetEntriesResult::newMessage(Common::MessageHeader::MessageType type, const google::protobuf::Message& message)

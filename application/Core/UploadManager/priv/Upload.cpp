@@ -28,7 +28,15 @@ using namespace UM;
 quint64 Upload::currentID(1);
 
 Upload::Upload(QSharedPointer<FM::IChunk> chunk, int offset, QSharedPointer<PM::ISocket> socket, Common::TransferRateCalculator& transferRateCalculator) :
-   Common::Timeoutable(SETTINGS.get<quint32>("upload_lifetime")), mainThread(QThread::currentThread()), ID(currentID++), chunk(chunk), offset(offset), socket(socket), transferRateCalculator(transferRateCalculator), networkError(false), toStop(false)
+   Common::Timeoutable(SETTINGS.get<quint32>("upload_lifetime")),
+   mainThread(QThread::currentThread()),
+   ID(currentID++),
+   chunk(chunk),
+   offset(offset),
+   socket(socket),
+   transferRateCalculator(transferRateCalculator),
+   closeTheSocket(false),
+   toStop(false)
 {   
 }
 
@@ -91,7 +99,7 @@ void Upload::run()
          if (bytesSent == -1)
          {
             L_WARN(QString("Socket : cannot send data : %1").arg(this->chunk->toStringLog()));
-            this->networkError = true;
+            this->closeTheSocket = true;
             goto end;
          }
 
@@ -108,8 +116,8 @@ void Upload::run()
          {
             if (!socket->waitForBytesWritten(SOCKET_TIMEOUT))
             {
-               L_WARN(QString("Socket : cannot write data, error : %1, chunk : %2").arg(socket->errorString()).arg(this->chunk->toStringLog()));
-               this->networkError = true;
+               L_WARN(QString("Socket: cannot write data, error: \"%1\", chunk: %2").arg(socket->errorString()).arg(this->chunk->toStringLog()));
+               this->closeTheSocket = true;
                goto end;
             }
          }
@@ -120,18 +128,22 @@ void Upload::run()
    catch(FM::UnableToOpenFileInReadModeException&)
    {
       L_WARN("UnableToOpenFileInReadModeException");
+      this->closeTheSocket = true;
    }
    catch(FM::IOErrorException&)
    {
       L_WARN("IOErrorException");
+      this->closeTheSocket = true;
    }
    catch (FM::ChunkDeletedException)
    {
       L_WARN("ChunkDeletedException");
+      this->closeTheSocket = true;
    }
    catch (FM::ChunkNotCompletedException)
    {
       L_WARN("ChunkNotCompletedException");
+      this->closeTheSocket = true;
    }
 
 end:
@@ -140,7 +152,7 @@ end:
 
 void Upload::finished()
 {
-   this->socket->finished(this->networkError ? PM::ISocket::SFS_ERROR : PM::ISocket::SFS_OK);
+   this->socket->finished(this->closeTheSocket);
    this->startTimer();
 }
 

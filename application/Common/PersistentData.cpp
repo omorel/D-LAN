@@ -49,44 +49,13 @@ const QString PersistentData::TEMP_SUFFIX_TERM(".temp");
 void PersistentData::setValue(const QString& name, const google::protobuf::Message& data, Global::DataFolderType dataFolderType, bool humanReadable)
 {
    Q_ASSERT(!name.isEmpty());
+   PersistentData::setValueFilepath(Global::getDataFolder(dataFolderType) + '/' + name, data, dataFolderType, humanReadable);
+}
 
-   try
-   {
-      const QString FILEPATH(Global::getDataFolder(dataFolderType) + '/' + name);
-      const QString TEMP_FILEPATH(FILEPATH + TEMP_SUFFIX_TERM);
-
-      // To avoid ::Print(..) to crash, see defect #153.
-      if (Global::availableDiskSpace(Global::getDataFolder(dataFolderType)) < 20 * 1024 * 1024)
-         return;
-
-      {
-         QFile file(TEMP_FILEPATH);
-         if (!file.open(QIODevice::WriteOnly))
-            throw PersistentDataIOException(QString("Unable to open the file in write mode : %1, error : %2").arg(TEMP_FILEPATH).arg(file.errorString()));
-
-#if !DEBUG
-         if (humanReadable)
-         {
-#endif
-            google::protobuf::io::FileOutputStream fileStream(file.handle());
-            google::protobuf::TextFormat::Printer printer;
-            printer.SetUseShortRepeatedPrimitives(true);
-            printer.Print(data, &fileStream);
-#if !DEBUG
-         }
-         else
-         {
-            data.SerializeToFileDescriptor(file.handle());
-         }
-#endif
-      }
-
-      Global::rename(TEMP_FILEPATH, FILEPATH);
-   }
-   catch(Global::UnableToGetFolder& e)
-   {
-      throw PersistentDataIOException(e.errorMessage);
-   }
+void PersistentData::setValue(const QString& directory, const QString& name, const google::protobuf::Message& data, Global::DataFolderType dataFolderType, bool humanReadable)
+{
+   Q_ASSERT(!name.isEmpty());
+   PersistentData::setValueFilepath(directory + '/' + name, data, dataFolderType, humanReadable);
 }
 
 /**
@@ -97,31 +66,13 @@ void PersistentData::setValue(const QString& name, const google::protobuf::Messa
 void PersistentData::getValue(const QString& name, google::protobuf::Message& data, Global::DataFolderType dataFolderType, bool humanReadable)
 {
    Q_ASSERT(!name.isEmpty());
+   PersistentData::getValueFilepath(Global::getDataFolder(dataFolderType) + '/' + name, data, dataFolderType, humanReadable);
+}
 
-   try
-   {
-      QFile file(Global::getDataFolder(dataFolderType) + '/' + name);
-      if (!file.open(QIODevice::ReadOnly))
-         throw UnknownValueException();
-
-   #if !DEBUG
-      if (humanReadable)
-      {
-   #endif
-         google::protobuf::io::FileInputStream fileStream(file.handle());
-         google::protobuf::TextFormat::Parse(&fileStream, &data);
-   #if !DEBUG
-      }
-      else
-      {
-         data.ParsePartialFromFileDescriptor(file.handle());
-      }
-   #endif
-   }
-   catch(Global::UnableToGetFolder& e)
-   {
-      throw PersistentDataIOException(e.errorMessage);
-   }
+void PersistentData::getValue(const QString& name, const QString& directory, google::protobuf::Message& data, Global::DataFolderType dataFolderType, bool humanReadable)
+{
+   Q_ASSERT(!name.isEmpty());
+   PersistentData::getValueFilepath(directory + '/' + name, data, dataFolderType, humanReadable);
 }
 
 /**
@@ -130,16 +81,77 @@ void PersistentData::getValue(const QString& name, google::protobuf::Message& da
   * @return Return false if the data didn't exist.
   */
 bool PersistentData::rmValue(const QString& name, Global::DataFolderType dataFolderType)
+try
 {
    Q_ASSERT(!name.isEmpty());
+   return QFile::remove(Global::getDataFolder(dataFolderType) + '/' + name);
+}
+catch(Global::UnableToGetFolder& e)
+{
+   throw PersistentDataIOException(e.errorMessage);
+}
 
-   try
+
+void PersistentData::setValueFilepath(const QString& filepath, const google::protobuf::Message& data, Global::DataFolderType dataFolderType, bool humanReadable)
+try
+{
+   const QString TEMP_FILEPATH(filepath + TEMP_SUFFIX_TERM);
+
+   // To avoid ::Print(..) to crash, see defect #153.
+   if (Global::availableDiskSpace(Global::getDataFolder(dataFolderType)) < 20 * 1024 * 1024)
+      return;
+
    {
-      return QFile::remove(Global::getDataFolder(dataFolderType) + '/' + name);
+      QFile file(TEMP_FILEPATH);
+      if (!file.open(QIODevice::WriteOnly))
+         throw PersistentDataIOException(QString("Unable to open the file in write mode : %1, error : %2").arg(TEMP_FILEPATH).arg(file.errorString()));
+
+#if !DEBUG
+      if (humanReadable)
+      {
+#endif
+         google::protobuf::io::FileOutputStream fileStream(file.handle());
+         google::protobuf::TextFormat::Printer printer;
+         printer.SetUseShortRepeatedPrimitives(true);
+         printer.Print(data, &fileStream);
+#if !DEBUG
+      }
+      else
+      {
+         data.SerializeToFileDescriptor(file.handle());
+      }
+#endif
    }
-   catch(Global::UnableToGetFolder& e)
+
+   Global::rename(TEMP_FILEPATH, filepath);
+}
+catch(Global::UnableToGetFolder& e)
+{
+   throw PersistentDataIOException(e.errorMessage);
+}
+
+void PersistentData::getValueFilepath(const QString& filepath, google::protobuf::Message& data, Global::DataFolderType dataFolderType, bool humanReadable)
+try
+{
+   QFile file(filepath);
+   if (!file.open(QIODevice::ReadOnly))
+      throw UnknownValueException();
+
+#if !DEBUG
+   if (humanReadable)
    {
-      throw PersistentDataIOException(e.errorMessage);
+#endif
+      google::protobuf::io::FileInputStream fileStream(file.handle());
+      google::protobuf::TextFormat::Parse(&fileStream, &data);
+#if !DEBUG
    }
-   return false;
+   else
+   {
+      data.ParsePartialFromFileDescriptor(file.handle());
+   }
+#endif
+}
+catch(Global::UnableToGetFolder& e)
+{
+   throw PersistentDataIOException(e.errorMessage);
 }

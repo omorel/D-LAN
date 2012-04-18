@@ -88,9 +88,7 @@ bool Settings::save() const
 bool Settings::saveTo(const QString& filename) const
 {
    QMutexLocker locker(&this->mutex);
-
    Q_ASSERT(this->settings);
-
    if (!this->settings)
       return false;
 
@@ -139,6 +137,48 @@ void Settings::remove()
       return;
 
    PersistentData::rmValue(this->filename, Common::Global::ROAMING);
+}
+
+bool Settings::saveToACutomDirectory(const QString& directory) const
+{
+   QMutexLocker locker(&this->mutex);
+   Q_ASSERT(this->settings);
+   if (!this->settings)
+      return false;
+
+   try
+   {
+      PersistentData::setValue(directory, filename, *this->settings, Common::Global::ROAMING, true);
+      return true;
+   }
+   catch (PersistentDataIOException&)
+   {
+      return false;
+   }
+}
+
+bool Settings::loadFromACutomDirectory(const QString& directory)
+{
+   QMutexLocker locker(&this->mutex);
+
+   Q_ASSERT(this->settings);
+
+   if (!this->settings)
+      return false;
+
+   try
+   {
+      PersistentData::getValue(directory, this->filename, *this->settings, Common::Global::ROAMING, true);
+      return true;
+   }
+   catch (UnknownValueException&)
+   {
+      return false;
+   }
+   catch (PersistentDataIOException&)
+   {
+      return false;
+   }
 }
 
 void Settings::free()
@@ -199,6 +239,31 @@ void Settings::set(const QString& name, quint32 value)
       printErrorBadType(fieldDescriptor, "uint32");
       return;
    }
+}
+
+void Settings::set(const QString& name, quint64 value)
+{
+   QMutexLocker locker(&this->mutex);
+
+   Q_ASSERT(!name.isEmpty());
+   Q_ASSERT(this->settings);
+
+   if (!this->settings)
+      return;
+
+   const google::protobuf::FieldDescriptor* fieldDescriptor = this->descriptor->FindFieldByName(name.toStdString());
+   if (!fieldDescriptor)
+   {
+      printErrorNameNotFound(name);
+      return;
+   }
+   if (fieldDescriptor->type() != google::protobuf::FieldDescriptor::TYPE_UINT64)
+   {
+      printErrorBadType(fieldDescriptor, "uint64");
+      return;
+   }
+
+   this->settings->GetReflection()->SetUInt64(this->settings, fieldDescriptor, value);
 }
 
 void Settings::set(const QString& name, bool value)
@@ -480,6 +545,12 @@ void Settings::get(const google::protobuf::FieldDescriptor* fieldDescriptor, qui
    }
 }
 
+void Settings::get(const google::protobuf::FieldDescriptor* fieldDescriptor, quint64& value) const
+{
+   Q_ASSERT(fieldDescriptor);
+   value = this->settings->GetReflection()->GetUInt64(*this->settings, fieldDescriptor);
+}
+
 void Settings::get(const google::protobuf::FieldDescriptor* fieldDescriptor, bool& value) const
 {
    Q_ASSERT(fieldDescriptor);
@@ -545,7 +616,7 @@ void Settings::getRepeated(const google::protobuf::FieldDescriptor* fieldDescrip
 
 void Settings::setDefaultValues()
 {
-   // Very ugly : to force the optional field to be written. TODO : find a another way.
+   // Very ugly : to force the optional field to be written. TODO: find a another way.
    for (int i = 0; i < this->descriptor->field_count(); i++)
    {
       const google::protobuf::FieldDescriptor* fieldDescriptor = this->descriptor->field(i);

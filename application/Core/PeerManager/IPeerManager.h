@@ -40,16 +40,11 @@ namespace PM
       virtual ~IPeerManager() {}
 
       /**
-        * Return our ID. This ID is taken from the settings in the home folder of the current user.
-        * If there is no ID in the settings, this one is randomly generated and saved in the settings.
-        */
-      virtual Common::Hash getID() = 0;
-
-      /**
         * As the ID, the nick is saved in the file settings in the home folder of the current user.
         */
       virtual void setNick(const QString& nick) = 0;
-      virtual QString getNick() = 0;
+
+      virtual IPeer* getSelf() = 0;
 
       /**
         * Return all alive peers. A peer is never deleted but can become inactive.
@@ -59,6 +54,7 @@ namespace PM
 
       /**
         * Return the IPeer* coresponding to ID.
+        * May return ourself.
         * Return 0 if the peer doesn't exist.
         */
       virtual IPeer* getPeer(const Common::Hash& ID) = 0;
@@ -72,7 +68,12 @@ namespace PM
         * The method must be call frequently to tell that a peer (ID) is still alive.
         * @see The protobuf message 'Protos.Core.IMAlive' in "Protos/core_protocol.proto".
         */
-      virtual void updatePeer(const Common::Hash& ID, const QHostAddress& IP, quint16 port, const QString& nick, const quint64& sharingAmount) = 0;
+      virtual void updatePeer(const Common::Hash& ID, const QHostAddress& IP, quint16 port, const QString& nick, const quint64& sharingAmount, const QString& coreVersion) = 0;
+
+      /**
+        * Set all peers as inactive.
+        */
+      virtual void removeAllPeers() = 0;
 
       /**
         * @param tcpSocket PeerManager will care about deleting the socket.

@@ -56,7 +56,7 @@ void Tests::initTestCase()
    try
    {
       QString tempFolder = Common::Global::setCurrentDirToTemp("PeerManagerTests");
-      qDebug() << "Application folder path (where the persistent data is put) : " <<  Global::getDataFolder(Common::Global::LOCAL, false);
+      qDebug() << "Application directory path (where the persistent data is put) : " <<  Global::getDataFolder(Common::Global::LOCAL, false);
       qDebug() << "The file created during this test are put in : " << tempFolder;
    }
    catch(Common::Global::UnableToSetTempDirException& e)
@@ -64,7 +64,7 @@ void Tests::initTestCase()
       QFAIL(e.errorMessage.toAscii().constData());
    }
 
-   Common::PersistentData::rmValue(Common::FILE_CACHE, Common::Global::LOCAL); // Reset the stored cache.
+   Common::PersistentData::rmValue(Common::Constants::FILE_CACHE, Common::Global::LOCAL); // Reset the stored cache.
 
    SETTINGS.setFilename("core_settings_peer_manager_tests.txt");
    SETTINGS.setSettingsMessage(new Protos::Core::Settings());
@@ -135,10 +135,10 @@ void Tests::updatePeers()
 
          bool found = false;
          for (int k = 0; k < peers.size(); k++)
-            if (peers[k]->getID() == this->peerManagers[j]->getID())
+            if (peers[k]->getID() == this->peerManagers[j]->getSelf()->getID())
             {
                found = true;
-               QCOMPARE(peers[k]->getNick(), this->peerManagers[j]->getNick());
+               QCOMPARE(peers[k]->getNick(), this->peerManagers[j]->getSelf()->getNick());
 
                // Wait peer j knows peer k amount (amount increase concurrently during the scanning process).
                if (peers[k]->getSharingAmount() != this->fileManagers[j]->getAmount())
@@ -167,7 +167,7 @@ void Tests::getPeerFromID()
       {
          if (j == i)
             continue;
-         QCOMPARE(this->peerManagers[i]->getID(), this->peerManagers[j]->getPeer(this->peerManagers[i]->getID())->getID());
+         QCOMPARE(this->peerManagers[i]->getSelf()->getID(), this->peerManagers[j]->getPeer(this->peerManagers[i]->getSelf()->getID())->getID());
       }
 
       QVERIFY(this->peerManagers[i]->getPeer(Common::Hash::rand()) == 0);

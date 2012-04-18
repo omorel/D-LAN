@@ -36,84 +36,120 @@ DownloadsModel::DownloadsModel(QSharedPointer<RCC::ICoreConnection> coreConnecti
    connect(this->coreConnection.data(), SIGNAL(newState(Protos::GUI::State)), this, SLOT(onNewState(Protos::GUI::State)));
 }
 
+int DownloadsModel::columnCount(const QModelIndex& /*parent*/) const
+{
+   return 5;
+}
+
 QVariant DownloadsModel::getData(const Protos::GUI::State::Download& download, const QModelIndex& index, int role) const
 {
    switch (role)
    {
    case Qt::DisplayRole:
+      switch (index.column())
       {
-         switch (index.column())
-         {
-         case 0: return Common::ProtoHelper::getStr(download.local_entry(), &Protos::Common::Entry::name);
-         case 1: return Common::Global::formatByteSize(download.local_entry().size());
-         case 2:
-            return QVariant::fromValue(Progress(
-               download.local_entry().size() == 0 ? 0 : 10000 * download.downloaded_bytes() / download.local_entry().size(),
-               download.status(),
-               download.local_entry().type()
-            ));
-         case 3:
-            {
-               QString peersStr;
+      case 0: return Common::ProtoHelper::getStr(download.local_entry(), &Protos::Common::Entry::name);
+      case 1: return Common::Global::formatByteSize(download.local_entry().size());
+      case 2:
+         return QVariant::fromValue(Progress(
+            download.local_entry().size() == 0 ? 0 : 10000 * download.downloaded_bytes() / download.local_entry().size(),
+            download.status(),
+            download.local_entry().type()
+         ));
+      case 3:
+         if (download.has_peer_source_nick())
+            return Common::ProtoHelper::getStr(download, &Protos::GUI::State::Download::peer_source_nick);
+         return QString();
 
-               int i = 0;
-               if (download.has_peer_source_nick())
-               {
-                  i = 1;
-                  peersStr.append('[').append(Common::ProtoHelper::getStr(download, &Protos::GUI::State::Download::peer_source_nick)).append(']');
-               }
-               for (; i < download.peer_id_size(); i++)
-               {
-                  Common::Hash peerID(download.peer_id(i).hash());
-                  const QString nick = this->peerListModel.getNick(peerID);
-                  if (nick.isNull())
-                     continue;
-                  if (i != 0)
-                     peersStr.append(" ");
-                  peersStr.append('[').append(nick).append(']');
-               }
-               return peersStr;
-            }
-         default: return QVariant();
-         }
+      case 4:
+         if (download.peer_id_size() > 1)
+            return QString("+").append(QString::number(download.peer_id_size() - 1));
+         return QString();
+
+      default: return QVariant();
       }
 
    case Qt::DecorationRole:
+      if (index.column() == 0)
       {
-         if (index.column() == 0)
-         {
-            if (download.status() >= Protos::GUI::State::Download::UNKNOWN_PEER_SOURCE)
-               return QPixmap(":/icons/ressources/error.png");
-            else
-               return IconProvider::getIcon(download.local_entry());
-         }
-         return QVariant();
+         if (download.status() >= Protos::GUI::State::Download::UNKNOWN_PEER_SOURCE)
+            return QPixmap(":/icons/ressources/error.png");
+         else
+            return IconProvider::getIcon(download.local_entry());
       }
+      return QVariant();
 
    case Qt::ToolTipRole:
+      if (index.column() == 4)
+      {
+         QString peersStr;
+         for (int i = 1; i < download.peer_id_size(); i++)
+         {
+            Common::Hash peerID(download.peer_id(i).hash());
+            const QString nick = this->peerListModel.getNick(peerID);
+            if (nick.isNull())
+               continue;
+            if (!peersStr.isEmpty())
+               peersStr.append("\n");
+            peersStr += nick;
+         }
+         return peersStr;
+      }
+      else
       {
          QString toolTip;
          switch (download.status())
          {
          case Protos::GUI::State::Download::UNKNOWN_PEER_SOURCE:
-            toolTip += tr("Unknown source peer: ");
+            toolTip += tr("Source peer offline (%1)").arg(Common::ProtoHelper::getStr(download, &Protos::GUI::State::Download::peer_source_nick));
+            break;
          case Protos::GUI::State::Download::ENTRY_NOT_FOUND:
-            toolTip += tr("The source peer doesn't have the entry: ");
+            toolTip += tr("The source peer doesn't have the entry");
+            break;
          case Protos::GUI::State::Download::NO_SOURCE:
-            toolTip += tr("There is no source to download from: ");
+            toolTip += tr("There is no source to download from");
+            break;
          case Protos::GUI::State::Download::NO_SHARED_DIRECTORY_TO_WRITE:
-            toolTip += tr("No incoming folder: ");
+            toolTip += tr("No incoming directory");
+            break;
+
          case Protos::GUI::State::Download::NO_ENOUGH_FREE_SPACE:
-            toolTip += tr("Not enough free space left: ");
+            toolTip += tr("Not enough free space left");
+            break;
          case Protos::GUI::State::Download::UNABLE_TO_CREATE_THE_FILE:
-            toolTip += tr("Unable to create the file: ");
+            toolTip += tr("Unable to create the file");
+            break;
          case Protos::GUI::State::Download::UNABLE_TO_RETRIEVE_THE_HASHES:
-            toolTip += tr("Unable to retrieve the hashes: ");
+            toolTip += tr("Unable to retrieve the hashes");
+            break;
+
          case Protos::GUI::State::Download::TRANSFERT_ERROR:
-            toolTip += tr("Transfert error: ");
+            toolTip += tr("Transfert error");
+            break;
+         case Protos::GUI::State::Download::UNABLE_TO_OPEN_THE_FILE:
+            toolTip += tr("Unable to open the file");
+            break;
+         case Protos::GUI::State::Download::FILE_IO_ERROR:
+            toolTip += tr("Unable to write the file");
+            break;
+         case Protos::GUI::State::Download::FILE_NON_EXISTENT:
+            toolTip += tr("The local file has been deleted");
+            break;
+         case Protos::GUI::State::Download::GOT_TOO_MUCH_DATA:
+            toolTip += tr("Too much data received");
+            break;
+         case Protos::GUI::State::Download::HASH_MISSMATCH:
+            toolTip += tr("Data received do not match the hash");
+            break;
          default:;
          }
-         toolTip += this->getPath(index);
+         const QString& path = this->getPath(index);
+         if (!path.isEmpty())
+         {
+            if (!toolTip.isEmpty())
+               toolTip += " - ";
+            toolTip += this->getPath(index);
+         }
          return toolTip;
       }
 
@@ -137,7 +173,6 @@ QList<int> DownloadsModel::getNonFilteredDownloadIndices(const Protos::GUI::Stat
       switch (state.download(i).status())
       {
       case Protos::GUI::State::Download::QUEUED:
-      case Protos::GUI::State::Download::PAUSED:
          if (!(statusToFilter & STATUS_QUEUED))
             indices << i;
          break;
@@ -153,6 +188,7 @@ QList<int> DownloadsModel::getNonFilteredDownloadIndices(const Protos::GUI::Stat
             indices << i;
          break;
 
+      case Protos::GUI::State::Download::PAUSED:
       case Protos::GUI::State::Download::UNKNOWN_PEER_SOURCE:
       case Protos::GUI::State::Download::ENTRY_NOT_FOUND:
       case Protos::GUI::State::Download::NO_SOURCE:
@@ -161,7 +197,12 @@ QList<int> DownloadsModel::getNonFilteredDownloadIndices(const Protos::GUI::Stat
       case Protos::GUI::State::Download::UNABLE_TO_CREATE_THE_FILE:
       case Protos::GUI::State::Download::UNABLE_TO_RETRIEVE_THE_HASHES:
       case Protos::GUI::State::Download::TRANSFERT_ERROR:
-         if (!(statusToFilter & STATUS_ERROR))
+      case Protos::GUI::State::Download::UNABLE_TO_OPEN_THE_FILE:
+      case Protos::GUI::State::Download::FILE_IO_ERROR:
+      case Protos::GUI::State::Download::FILE_NON_EXISTENT:
+      case Protos::GUI::State::Download::GOT_TOO_MUCH_DATA:
+      case Protos::GUI::State::Download::HASH_MISSMATCH:
+         if (!(statusToFilter & STATUS_INACTIVE))
             indices << i;
          break;
 

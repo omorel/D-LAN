@@ -78,6 +78,10 @@ void DownloadsDelegate::paint(QPainter* painter, const QStyleOptionViewItem& opt
       // Remove the focus box, not very useful.
       QStyleOptionViewItemV4 newOption(option);
       newOption.state = option.state & (~QStyle::State_HasFocus);
+
+      if (index.column() == 3 && !static_cast<const DownloadsModel*>(index.model())->isSourceAlive(index))
+         newOption.font.setStrikeOut(true);
+
       QStyledItemDelegate::paint(painter, newOption, index);
    }
 }
@@ -86,8 +90,17 @@ QSize DownloadsDelegate::sizeHint(const QStyleOptionViewItem& option, const QMod
 {
    QSize size = QStyledItemDelegate::sizeHint(option, index);
 
-   if (index.column() == 2)
+   switch (index.column())
+   {
+   case 2:
       size.setWidth(120);
+      break;
+   case 4:
+      if (index.data().toString().isEmpty())
+         size.setWidth(0);
+      break;
+   }
+
    return size;
 }
 
@@ -98,7 +111,9 @@ WidgetDownloads::WidgetDownloads(QSharedPointer<RCC::ICoreConnection> coreConnec
    ui(new Ui::WidgetDownloads),
    coreConnection(coreConnection),
    downloadsFlatModel(coreConnection, peerListModel, sharedDirsModel, checkBoxModel),
-   downloadsTreeModel(coreConnection, peerListModel, sharedDirsModel, checkBoxModel)
+   downloadsTreeModel(coreConnection, peerListModel, sharedDirsModel, checkBoxModel),
+   currentDownloadsModel(0),
+   treeViewState(new SimpleTree<quint32>())
 {
    this->ui->setupUi(this);
 
@@ -117,6 +132,8 @@ WidgetDownloads::WidgetDownloads(QSharedPointer<RCC::ICoreConnection> coreConnec
    this->ui->tblDownloads->header()->setResizeMode(1, QHeaderView::ResizeToContents);
    this->ui->tblDownloads->header()->setResizeMode(2, QHeaderView::ResizeToContents);
    this->ui->tblDownloads->header()->setResizeMode(3, QHeaderView::ResizeToContents);
+   this->ui->tblDownloads->header()->setResizeMode(4, QHeaderView::ResizeToContents);
+   this->ui->tblDownloads->header()->setMinimumSectionSize(0);
 
    this->ui->tblDownloads->setSelectionBehavior(QAbstractItemView::SelectRows);
    this->ui->tblDownloads->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -166,35 +183,35 @@ void WidgetDownloads::changeEvent(QEvent* event)
 }
 
 void WidgetDownloads::displayContextMenuDownloads(const QPoint& point)
-{
-   // If there is at least one complete or downloading file we show a menu action to open the file location.
-   bool showOpenLocation = false;
+{   
    QModelIndexList selectedRows = this->ui->tblDownloads->selectionModel()->selectedRows();
-   for (QListIterator<QModelIndex> i(selectedRows); i.hasNext();)
-   {
-      const QModelIndex& index = i.next();
-      if (this->currentDownloadsModel->isFileLocationKnown(index))
-      {
-         showOpenLocation = true;
-         break;
-      }
-   }
-
-   QPair<QList<quint64>, bool> IDs = this->getDownloadIDsToPause();
 
    QMenu menu;
-   if (showOpenLocation)
-      menu.addAction(QIcon(":/icons/ressources/explore_folder.png"), tr("Open location"), this, SLOT(openLocationSelectedEntries()));
+
+   // If the connection isn't remote and there is at least one complete or downloading file we show a menu action to open the file location.
+   if (this->coreConnection->isLocal())
+      for (QListIterator<QModelIndex> i(selectedRows); i.hasNext();)
+         if (this->currentDownloadsModel->isFileLocationKnown(i.next()))
+         {
+            menu.addAction(QIcon(":/icons/ressources/explore_folder.png"), tr("Open location"), this, SLOT(openLocationSelectedEntries()));
+            break;
+         }
+
+   menu.addAction(QIcon(":/icons/ressources/arrow_up.png"), tr("Move to top"), this, SLOT(moveSelectedEntriesToTop()));
+
    menu.addAction(QIcon(":/icons/ressources/remove_complete_files.png"), tr("Remove completed files"), this, SLOT(removeCompletedFiles()));
    menu.addAction(QIcon(":/icons/ressources/delete.png"), tr("Remove selected entries"), this, SLOT(removeSelectedEntries()));
+
+   QPair<QList<quint64>, bool> IDs = this->getDownloadIDsToPause();
    if (!IDs.first.isEmpty())
       menu.addAction(QIcon(":/icons/ressources/pause.png"), IDs.second ? tr("Pause selected entries") : tr("Unpause selected entries"), this, SLOT(pauseSelectedEntries()));
+
    menu.exec(this->ui->tblDownloads->mapToGlobal(point));
 }
 
 void WidgetDownloads::downloadDoubleClicked(const QModelIndex& index)
 {
-   if (this->currentDownloadsModel->isFileLocationKnown(index))
+   if (this->currentDownloadsModel->getType(index) == Protos::Common::Entry::FILE && this->currentDownloadsModel->isFileLocationKnown(index))
       QDesktopServices::openUrl(QUrl("file:///" + this->currentDownloadsModel->getPath(index)));
 }
 
@@ -214,6 +231,31 @@ void WidgetDownloads::openLocationSelectedEntries()
       QDesktopServices::openUrl(QUrl(i.next(), QUrl::TolerantMode));
 }
 
+void WidgetDownloads::moveSelectedEntriesToTop()
+{
+   QSet<quint64> downloadIDs;
+
+   QModelIndexList selectedRows = this->ui->tblDownloads->selectionModel()->selectedRows();
+   for (QListIterator<QModelIndex> i(selectedRows); i.hasNext();)
+   {
+      const QModelIndex& index = i.next();
+      downloadIDs += this->currentDownloadsModel->getDownloadIDs(index).toSet();
+   }
+
+   // Search a download which is not selected
+   for (int r = 0; r < this->downloadsFlatModel.rowCount(); r++)
+   {
+      const quint64 id = this->downloadsFlatModel.getDownloadIDs(this->downloadsFlatModel.index(r, 0)).first();
+      if (!downloadIDs.contains(id))
+      {
+         this->coreConnection->moveDownloads(QList<quint64>() << id, downloadIDs.toList());
+         break;
+      }
+   }
+
+   this->ui->tblDownloads->selectionModel()->clear();
+}
+
 void WidgetDownloads::switchView()
 {
    if (this->currentDownloadsModel == &this->downloadsFlatModel)
@@ -229,14 +271,14 @@ void WidgetDownloads::removeCompletedFiles()
 
 void WidgetDownloads::removeSelectedEntries()
 {
-   QList<quint64> downloadIDs;
+   QSet<quint64> downloadIDs;
 
    QModelIndexList selectedRows = this->ui->tblDownloads->selectionModel()->selectedRows();
    bool allComplete = true;
    for (QListIterator<QModelIndex> i(selectedRows); i.hasNext();)
    {
       const QModelIndex& index = i.next();
-      downloadIDs.append(this->currentDownloadsModel->getDownloadIDs(index));
+      downloadIDs += this->currentDownloadsModel->getDownloadIDs(index).toSet();
       if (!this->currentDownloadsModel->isFileComplete(index))
          allComplete = false;
    }
@@ -253,10 +295,10 @@ void WidgetDownloads::removeSelectedEntries()
          msgBox.setStandardButtons(QMessageBox::Ok | QMessageBox::Cancel);
          msgBox.setDefaultButton(QMessageBox::Ok);
          if (msgBox.exec() == QMessageBox::Ok)
-            this->coreConnection->cancelDownloads(downloadIDs);
+            this->coreConnection->cancelDownloads(downloadIDs.toList());
       }
       else
-         this->coreConnection->cancelDownloads(downloadIDs);
+         this->coreConnection->cancelDownloads(downloadIDs.toList());
    }
 }
 
@@ -294,22 +336,32 @@ void WidgetDownloads::updateGlobalProgressBar()
 
 void WidgetDownloads::switchView(Protos::GUI::Settings::DownloadView view)
 {
-   if (view == Protos::GUI::Settings::TREE_VIEW && this->currentDownloadsModel != &this->downloadsTreeModel)
+   if (view == Protos::GUI::Settings::TREE_VIEW)
    {
       this->ui->butSwitchView->setIcon(QIcon(":/icons/ressources/list_view.png"));
-      this->ui->butSwitchView->setToolTip(tr("Switch to list view"));
+      this->ui->butSwitchView->setToolTip(tr("Switch to file list view"));
       this->ui->tblDownloads->setIndentation(20);
-      this->currentDownloadsModel = &this->downloadsTreeModel;
+
+      if (this->currentDownloadsModel != &this->downloadsTreeModel)
+      {
+         this->currentDownloadsModel = &this->downloadsTreeModel;
+         this->ui->tblDownloads->setModel(this->currentDownloadsModel);
+         this->restoreTreeViewState();
+      }
    }
-   else if (view == Protos::GUI::Settings::LIST_VIEW && this->currentDownloadsModel != &this->downloadsFlatModel)
+   else if (view == Protos::GUI::Settings::LIST_VIEW)
    {
       this->ui->butSwitchView->setIcon(QIcon(":/icons/ressources/tree_view.png"));
       this->ui->butSwitchView->setToolTip(tr("Switch to tree view"));
       this->ui->tblDownloads->setIndentation(0);
-      this->currentDownloadsModel = &this->downloadsFlatModel;
-   }
 
-   this->ui->tblDownloads->setModel(this->currentDownloadsModel);
+      if (this->currentDownloadsModel != &this->downloadsFlatModel)
+      {
+         this->saveTreeViewState();
+         this->currentDownloadsModel = &this->downloadsFlatModel;
+         this->ui->tblDownloads->setModel(this->currentDownloadsModel);
+      }
+   }
 
    SETTINGS.set("download_view", static_cast<quint32>(view));
    SETTINGS.save();
@@ -321,7 +373,7 @@ void WidgetDownloads::updateCheckBoxElements()
    this->checkBoxModel.addElement(tr("Complete"), true, STATUS_COMPLETE);
    this->checkBoxModel.addElement(tr("Downloading"), true, STATUS_DOWNLOADING);
    this->checkBoxModel.addElement(tr("Queued"), true, STATUS_QUEUED);
-   this->checkBoxModel.addElement(tr("Error"), true, STATUS_ERROR);
+   this->checkBoxModel.addElement(tr("Inactive"), true, STATUS_INACTIVE);
 }
 
 QPair<QList<quint64>, bool> WidgetDownloads::getDownloadIDsToPause() const
@@ -343,4 +395,55 @@ QPair<QList<quint64>, bool> WidgetDownloads::getDownloadIDsToPause() const
    }
 
    return qMakePair(downloadIDs.toList(), !allPaused);
+}
+
+/**
+  * Save the opened directories in 'treeViewState'. Save only hash(item_name) to save space and to facilitate a future serialization.
+  */
+void WidgetDownloads::saveTreeViewState()
+{
+   if (this->currentDownloadsModel != &this->downloadsTreeModel)
+      return;
+
+   this->treeViewState->deleteAllChildren();
+   this->saveTreeViewState(QModelIndex(), this->treeViewState);
+}
+
+void WidgetDownloads::saveTreeViewState(const QModelIndex& index, SimpleTree<quint32>* tree)
+{
+   for (int row = 0; row < this->downloadsTreeModel.rowCount(index); row++)
+   {
+      const QModelIndex& childIndex = this->downloadsTreeModel.index(row, 0, index);
+      if (this->ui->tblDownloads->isExpanded(childIndex))
+         this->saveTreeViewState(childIndex, tree->insertChild(Common::Global::hashStringToInt(this->downloadsTreeModel.data(childIndex).toString())));
+   }
+}
+
+/**
+  * Restore the opened directories from 'treeViewState'.
+  */
+void WidgetDownloads::restoreTreeViewState()
+{
+   if (this->currentDownloadsModel != &this->downloadsTreeModel)
+      return;
+
+   this->restoreTreeViewState(QModelIndex(), this->treeViewState);
+}
+
+void WidgetDownloads::restoreTreeViewState(const QModelIndex& index, SimpleTree<quint32>* tree)
+{
+   // O(n^2)
+   for (int row = 0; row < this->downloadsTreeModel.rowCount(index); row++)
+   {
+      const QModelIndex& childIndex = this->downloadsTreeModel.index(row, 0, index);
+      const quint32 currentHash = Common::Global::hashStringToInt(this->downloadsTreeModel.data(childIndex).toString());
+
+      for (int i = 0; i < tree->getNbChildren(); i++)
+         if (tree->getChild(i)->getItem() == currentHash)
+         {
+            this->ui->tblDownloads->expand(childIndex);
+            this->restoreTreeViewState(childIndex, tree->getChild(i));
+            break;
+         }
+   }
 }

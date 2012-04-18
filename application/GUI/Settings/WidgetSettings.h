@@ -56,6 +56,7 @@ namespace GUI
    public slots:
       void resetCoreAddress();
       void connectToCore();
+      void disconnectFromTheCore();
 
    signals:
       void languageChanged(const QString& filename);
@@ -66,7 +67,7 @@ namespace GUI
       void connectAllAddressButtons();
       void disconnectAllAddressButtons();
       void updateNetworkInterfaces(const Protos::GUI::State& state);
-      void updateAddresses(const Protos::Common::Interface& interface, QWidget *container);
+      void updateAddresses(const Protos::Common::Interface& interface, QWidget* container);
 
    private slots:
       void newState(const Protos::GUI::State& state);
@@ -80,6 +81,7 @@ namespace GUI
       void cmbLanguageChanged(int cmbIndex);
 
       void changePassword();
+      void resetPassword();
 
       void addShared();
       void removeShared();
@@ -111,7 +113,7 @@ namespace GUI
 
       DirListDelegate dirListDelegate;
 
-      Common::Hash currentPassword;
+      bool corePasswordDefined;
    };
 }
 

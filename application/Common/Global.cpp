@@ -23,7 +23,7 @@ using namespace Common;
 
 #include <QDir>
 #include <QDirIterator>
-#include <QDebug>
+#include <QStringBuilder>
 #include <QtGlobal>
 #include <QRegExp>
 #include <QHostAddress>
@@ -35,9 +35,13 @@ using namespace Common;
    #include <Lmcons.h>
 #elif defined (Q_OS_LINUX)
    #include <cstdio>
+   #include <sys/statvfs.h>
+   #include <sys/utsname.h>
+   #include <unistd.h>
 #endif
 
 #include <Constants.h>
+#include <Version.h>
 
 /**
   * @class Common::Global
@@ -48,6 +52,78 @@ using namespace Common;
 Global::UnableToSetTempDirException::UnableToSetTempDirException(const QString& dir) :
    errorMessage(QString("Unable to create the temporary directory %1").arg(dir))
 {
+}
+
+QString Global::getVersion()
+{
+   return QString(VERSION);
+}
+
+QString Global::getVersionTag()
+{
+   return QString(VERSION_TAG);
+}
+
+QString Global::getSystemVersion()
+{
+#if defined(Q_OS_WIN32)
+   // Reference: http://msdn.microsoft.com/en-us/library/windows/desktop/ms724429(v=vs.85).aspx
+   OSVERSIONINFOEX versionInfo;
+   memset(&versionInfo, 0, sizeof(versionInfo));
+   versionInfo.dwOSVersionInfoSize = sizeof(versionInfo);
+   GetVersionEx((OSVERSIONINFO*)&versionInfo);
+
+   if (versionInfo.dwMajorVersion == 6 && versionInfo.dwMinorVersion == 0)
+   {
+      if (versionInfo.wProductType == VER_NT_WORKSTATION)
+         return QString("Windows Vista");
+      else
+         return QString("Windows Server 2008");
+   }
+   else if (versionInfo.dwMajorVersion == 6 && versionInfo.dwMinorVersion == 1)
+   {
+      if (versionInfo.wProductType == VER_NT_WORKSTATION)
+         return QString("Windows 7");
+      else
+         return QString("Windows Server 2008 R2");
+   }
+   else if (versionInfo.dwMajorVersion == 5 && versionInfo.dwMinorVersion == 2)
+   {
+      return QString("Windows Server 2003");
+   }
+   else if (versionInfo.dwMajorVersion == 5 && versionInfo.dwMinorVersion == 1)
+   {
+      return QString("Windows XP");
+   }
+   else if (versionInfo.dwMajorVersion == 5 && versionInfo.dwMinorVersion == 0)
+   {
+      return QString("Windows 2000");
+   }
+   return QString("Windows");
+#elif defined(Q_OS_LINUX)
+   struct utsname name;
+   if (uname(&name) == 0)
+      return QString::fromUtf8(name.sysname) % " " % QString::fromUtf8(name.release);
+   else
+      return "Linux";
+#elif defined(Q_OS_DARWIN)
+   return "Mac OS X";
+#else
+   return QString();
+#endif
+}
+
+/**
+  * @return Version + version tag + system version.
+  */
+QString Global::getVersionFull()
+{
+   const QString versionTag = Global::getVersionTag();
+   const QString systemVersion = Global::getSystemVersion();
+   return
+      Global::getVersion() %
+      (versionTag.isEmpty() ? QString() : " " % Global::getVersionTag()) %
+      (systemVersion.isEmpty() ? QString() : " - " % Global::getSystemVersion());
 }
 
 /**
@@ -92,7 +168,7 @@ int Global::nCombinations(int n, int k)
    else
       bytes = 0;
 
-   return QString::number(bytes).append(IS_BELOW_1024 ? "" : QString(".").append(QString::number(rest))).append(" ").append(BINARY_PREFIXS[current]);
+   return QString::number(bytes).append(IS_BELOW_1024 ? "" : QString(".").append(QString::number(rest))).append(" ").append(Constants::BINARY_PREFIXS[current]);
 }*/
 
 /**
@@ -118,8 +194,8 @@ QString Global::formatByteSize(qint64 bytes, int precision)
 
       if (bytes < 1024 * size)
          return bytes < 1024 ?
-            QString::number(bytes <= 0 ? 0 : bytes).append(" ").append(BINARY_PREFIXS[i]) :
-            QString::number((double)bytes / size, 'f', precision).append(" ").append(BINARY_PREFIXS[i]);
+            QString::number(bytes <= 0 ? 0 : bytes).append(" ").append(Constants::BINARY_PREFIXS[i]) :
+            QString::number((double)bytes / size, 'f', precision).append(" ").append(Constants::BINARY_PREFIXS[i]);
    }
    return QString();
 }
@@ -178,13 +254,12 @@ QString Global::formatIP(const QHostAddress& address, quint16 port)
 
 /**
   * Return the remaining free space for the given path.
-  * TODO : Linux
   */
 qint64 Global::availableDiskSpace(const QString& path)
 {
    Q_ASSERT(!path.isEmpty());
 
-#ifdef Q_OS_WIN32
+#if defined(Q_OS_WIN32)
    ULARGE_INTEGER space;
    wchar_t buffer[path.size()];
 
@@ -194,6 +269,10 @@ qint64 Global::availableDiskSpace(const QString& path)
    if (!GetDiskFreeSpaceEx(buffer, &space, NULL, NULL))
       return std::numeric_limits<qint64>::max();
    return space.QuadPart;
+#elif defined(Q_OS_LINUX)
+   struct statvfs info;
+   if (statvfs(path.toUtf8().constData(), &info) == 0)
+      return static_cast<qint64>(info.f_bsize) * info.f_bavail;
 #endif
 
    return std::numeric_limits<qint64>::max();
@@ -201,8 +280,7 @@ qint64 Global::availableDiskSpace(const QString& path)
 
 /**
   * Rename a file, if 'newFile' already exists, it will be replaced by 'existingFile'.
-  * TODO : Linux
-  * @remarks Qt doesn't offer any way to replace a file by an other in one operation.
+  * @remarks Qt doesn't offer any way to replace a file by an other in one operation (atomic).
   * @return false if the rename didn't work.
   */
 bool Global::rename(const QString& existingFile, const QString& newFile)
@@ -213,7 +291,7 @@ bool Global::rename(const QString& existingFile, const QString& newFile)
 #ifdef Q_OS_WIN32
    return MoveFileEx((LPCTSTR)existingFile.utf16(), (LPCTSTR)newFile.utf16(), MOVEFILE_REPLACE_EXISTING);
 #else
-   return std::rename(qPrintable(existingFile), qPrintable(newFile)) == 0;
+   return std::rename(existingFile.toUtf8().constData(), newFile.toUtf8().constData()) == 0;
 #endif
 }
 
@@ -315,6 +393,26 @@ QStringList Global::splitInWords(const QString& words)
    return Global::toLowerAndRemoveAccents(words).split(regExp, QString::SkipEmptyParts);
 }
 
+/**
+  * Compare two std::string without case sensitive.
+  * @return 0 if equal, 1 if s1 > s2, -1 if s1 < s2.
+  */
+int Global::strcmpi(const std::string& s1, const std::string& s2)
+{
+   for (unsigned int i = 0; i < s1.length() && i < s2.length(); i++)
+   {
+      const int c1 = tolower(s1[i]);
+      const int c2 = tolower(s2[i]);
+      if (c1 > c2) return 1;
+      else if (c1 < c2) return -1;
+   }
+   if (s1.length() > s2.length())
+      return 1;
+   else if (s1.length() < s2.length())
+      return -1;
+   return 0;
+}
+
 quint32 Global::hashStringToInt(const QString& str)
 {
    QByteArray data = str.toLocal8Bit();
@@ -350,22 +448,22 @@ QString Global::getDataFolder(DataFolderType type, bool create)
 #ifdef Q_OS_WIN32
       TCHAR dataPath[MAX_PATH];
       if (!SUCCEEDED(SHGetFolderPath(NULL, type == ROAMING ? CSIDL_APPDATA : CSIDL_LOCAL_APPDATA, NULL, 0, dataPath)))
-         throw UnableToGetFolder(QString("Unable to get the %1: SHGetFolderPath failed").arg(type == ROAMING ? "roaming user folder path" : "local user folder path"));
+         throw UnableToGetFolder(QString("Unable to get the %1: SHGetFolderPath failed").arg(type == ROAMING ? "roaming user directory path" : "local user directory path"));
 
       const QString dataFolderPath = QString::fromUtf16((ushort*)dataPath);
       const QDir dataFolder(dataFolderPath);
 
-      if (create && !dataFolder.exists(APPLICATION_FOLDER_NAME))
-         if (!dataFolder.mkdir(APPLICATION_FOLDER_NAME))
-            throw UnableToGetFolder(QString("Unable to create the folder %1 in %2").arg(APPLICATION_FOLDER_NAME).arg(dataFolder.absolutePath()));
+      if (create && !dataFolder.exists(Constants::APPLICATION_FOLDER_NAME))
+         if (!dataFolder.mkdir(Constants::APPLICATION_FOLDER_NAME))
+            throw UnableToGetFolder(QString("Unable to create the directory %1 in %2").arg(Constants::APPLICATION_FOLDER_NAME).arg(dataFolder.absolutePath()));
 
-      return dataFolder.absoluteFilePath(APPLICATION_FOLDER_NAME);
+      return dataFolder.absoluteFilePath(Constants::APPLICATION_FOLDER_NAME);
 #else
-      if (create && !QDir::home().exists(APPLICATION_FOLDER_NAME))
-         if (!QDir::home().mkdir(APPLICATION_FOLDER_NAME))
-             throw UnableToGetFolder(QString("Unable to create the folder %1 in %2").arg(APPLICATION_FOLDER_NAME).arg(QDir::home().absolutePath()));
+      if (create && !QDir::home().exists(Constants::APPLICATION_FOLDER_NAME))
+         if (!QDir::home().mkdir(Constants::APPLICATION_FOLDER_NAME))
+             throw UnableToGetFolder(QString("Unable to create the directory %1 in %2").arg(Constants::APPLICATION_FOLDER_NAME).arg(QDir::home().absolutePath()));
 
-      return QDir::home().absoluteFilePath(APPLICATION_FOLDER_NAME);
+      return QDir::home().absoluteFilePath(Constants::APPLICATION_FOLDER_NAME);
 #endif
    }
 }
@@ -412,7 +510,7 @@ QString Global::getDataServiceFolder(DataFolderType type)
       if (windowsPathSplit.isEmpty())
          return QString();
 
-      return windowsPathSplit.first() + "/Documents and Settings/LocalService" + (type == ROAMING ? "/Application Data/" : "/Local Settings/Application Data/") + APPLICATION_FOLDER_NAME;
+      return windowsPathSplit.first().replace('\\', '/') + "/Documents and Settings/LocalService" + (type == ROAMING ? "/Application Data/" : "/Local Settings/Application Data/") + Constants::APPLICATION_FOLDER_NAME;
    }
 #else
    return Global::getDataSystemFolder(type);
@@ -430,7 +528,7 @@ QString Global::getDataSystemFolder(DataFolderType type)
    // SHGetKnownFolderPath should be use for vista a superior but it doesn't exist in mingw.
    if (!SUCCEEDED(SHGetFolderPath(NULL, CSIDL_SYSTEMX86, NULL, 0, dataPathSystem)))
       return QString();
-   const QString dataFolderPath = QString::fromUtf16((ushort*)dataPathSystem);
+   const QString dataFolderPath = QString::fromUtf16((ushort*)dataPathSystem).replace('\\', '/');
 
    OSVERSIONINFO versionInfo;
    memset(&versionInfo, 0, sizeof(versionInfo));
@@ -439,9 +537,9 @@ QString Global::getDataSystemFolder(DataFolderType type)
 
    // Vista & Windows 7
    if (versionInfo.dwMajorVersion >= 6)
-      return dataFolderPath + "/config/systemprofile/AppData" + (type == ROAMING ? "/Roaming/" : "/local/") + APPLICATION_FOLDER_NAME;
+      return dataFolderPath + "/config/systemprofile/AppData" + (type == ROAMING ? "/Roaming/" : "/local/") + Constants::APPLICATION_FOLDER_NAME;
    else
-      return dataFolderPath + "/config/systemprofile" + (type == ROAMING ? "/Application Data/" : "/Local Settings/Application Data/") + APPLICATION_FOLDER_NAME;
+      return dataFolderPath + "/config/systemprofile" + (type == ROAMING ? "/Application Data/" : "/Local Settings/Application Data/") + Constants::APPLICATION_FOLDER_NAME;
 #else
    return QString();
 #endif
@@ -449,25 +547,36 @@ QString Global::getDataSystemFolder(DataFolderType type)
 
 QString Global::getCurrenUserName()
 {
-#ifdef Q_OS_WIN32
+#if defined(Q_OS_WIN32)
    TCHAR userName[UNLEN + 1]; // UNLEN is from Lmcons.h
    DWORD userNameSize = sizeof(userName);
    GetUserName(userName, &userNameSize);
    return QString::fromUtf16((ushort*)userName);
-#else // TODO
+#elif defined(Q_OS_LINUX)
+   char* login = getlogin();
+   if (login)
+      return QString::fromUtf8(login);
+   else
+      return QString();
+#else
    return "Bob";
 #endif
 }
 
 QString Global::getCurrenMachineName()
 {
-#ifdef Q_OS_WIN32
+#if defined(Q_OS_WIN32)
    TCHAR machineName[MAX_COMPUTERNAME_LENGTH + 1];
    DWORD machineNameSize = sizeof(machineName);
    GetComputerName(machineName, &machineNameSize);
    return QString::fromUtf16((ushort*)machineName);
-#else // TODO
-   return "CPU";
+#elif defined(Q_OS_LINUX)
+   char machineName[256];
+   size_t machineNameSize = sizeof(machineName);
+   gethostname(machineName, machineNameSize);
+   return QString::fromUtf8(machineName);
+#else
+   return "Bob";
 #endif
 }
 

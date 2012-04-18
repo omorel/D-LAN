@@ -35,6 +35,7 @@
 #include <priv/DownloadQueue.h>
 #include <priv/DownloadPredicate.h>
 #include <priv/OccupiedPeers.h>
+#include <priv/LinkedPeers.h>
 #include <priv/Log.h>
 
 namespace PM
@@ -72,7 +73,8 @@ namespace DM
 
       void pauseDownloads(QList<quint64> IDs, bool pause = true);
 
-      QList< QSharedPointer<IChunkDownload> > getUnfinishedChunks(int n) const;
+      QList< QSharedPointer<IChunkDownload> > getTheFirstUnfinishedChunks(int n);
+      QList< QSharedPointer<IChunkDownload> > getTheOldestUnfinishedChunks(int n);
 
       int getDownloadRate();
 
@@ -88,7 +90,9 @@ namespace DM
       void peerNoLongerDownloadingChunk(PM::IPeer* peer);
 
       void scanTheQueue();
+      void rescanTimerActivated();
       void chunkDownloadFinished();
+      void downloadStatusBecomeErroneous(Download* download);
 
    private:
       void loadQueueFromFile();
@@ -104,6 +108,7 @@ namespace DM
 
       QSharedPointer<FM::IFileManager> fileManager;
       QSharedPointer<PM::IPeerManager> peerManager;
+      LinkedPeers linkedPeers; // Number of 'ChunkDownload' each peer owns.
 
       Common::TransferRateCalculator transferRateCalculator;
 

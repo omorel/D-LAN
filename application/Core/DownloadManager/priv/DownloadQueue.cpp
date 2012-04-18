@@ -36,6 +36,7 @@ using namespace DM;
   * Goals:
   *  - Manage a queue of downloads.
   *  - Index queue by download peers to improve performance.
+  *  - Save some positions (markers) to improve itarating performance (see the 'ScanningIterator' class).
   *  - Persist/load the queue to/from a file.
   */
 
@@ -62,7 +63,13 @@ void DownloadQueue::insert(int position, Download* download)
    this->updateMarkersInsert(position, download);
 
    this->downloads.insert(position, download);
-   this->downloadsIndexedBySourcePeerID.insert(download->getPeerSource()->getID(), download);
+   this->downloadsIndexedBySourcePeer.insert(download->getPeerSource(), download);
+
+   if (FileDownload* fileDownload = dynamic_cast<FileDownload*>(download))
+   {
+      this->downloadsSortedByTime.insert(QTime(), fileDownload);
+      connect(fileDownload, SIGNAL(lastTimeGetAllUnfinishedChunksChanged(QTime)), this, SLOT(fileDownloadTimeChanged(QTime)), Qt::QueuedConnection);
+   }
 }
 
 Download* DownloadQueue::operator[] (int position) const
@@ -80,26 +87,35 @@ void DownloadQueue::remove(int position)
    this->updateMarkersRemove(position);
 
    Download* download = (*this)[position];
-   this->downloadsIndexedBySourcePeerID.remove(download->getPeerSource()->getID(), download);
+
+   if (FileDownload* fileDownload = dynamic_cast<FileDownload*>(download))
+      this->downloadsSortedByTime.remove(fileDownload->getLastTimeGetAllUnfinishedChunks(), fileDownload);
+
+   this->downloadsIndexedBySourcePeer.remove(download->getPeerSource(), download);
    this->downloads.removeAt(position);
+   this->erroneousDownloads.removeOne(download);
 }
 
 void DownloadQueue::peerBecomesAvailable(PM::IPeer* peer)
 {
-   for (QMultiHash<Common::Hash, Download*>::iterator i = this->downloadsIndexedBySourcePeerID.find(peer->getID()); i != this->downloadsIndexedBySourcePeerID.end() && i.key() == peer->getID(); ++i)
+   for (QMultiHash<PM::IPeer*, Download*>::iterator i = this->downloadsIndexedBySourcePeer.find(peer); i != this->downloadsIndexedBySourcePeer.end() && i.key() == peer; ++i)
       i.value()->peerSourceBecomesAvailable();
 }
 
-bool DownloadQueue::isAPeerSource(const Common::Hash& peerID) const
+bool DownloadQueue::isAPeerSource(PM::IPeer* peer) const
 {
-   return this->downloadsIndexedBySourcePeerID.contains(peerID);
+   return this->downloadsIndexedBySourcePeer.contains(peer);
 }
 
 void DownloadQueue::moveDownloads(const QList<quint64>& downloadIDRefs, const QList<quint64>& downloadIDs, Protos::GUI::MoveDownloads::Position position)
 {
-   /*
-   TODO
+   if (downloadIDRefs.isEmpty() || downloadIDs.isEmpty())
+      return;
+
    QList<quint64> downloadIDsCopy(downloadIDs);
+   QList<quint64> downloadIDRefsCopy(downloadIDRefs);
+
+   quint64 downloadIDRef = downloadIDRefsCopy.size() == 1 ? downloadIDRefsCopy.first() : 0;
    int iRef = -1; // Index of the download reference, -1 if unknown.
    QList<int> iToMove;
 
@@ -110,8 +126,8 @@ void DownloadQueue::moveDownloads(const QList<quint64>& downloadIDRefs, const QL
       {
          if (iRef != -1)
          {
-            int whereToInsert = moveBefore ? iRef++ : ++iRef;
-            int whereToRemove = i + 1;
+            const int whereToInsert = position == Protos::GUI::MoveDownloads::BEFORE ? iRef++ : ++iRef;
+            const int whereToRemove = i + 1;
 
             this->updateMarkersMove(whereToInsert, whereToRemove, this->downloads[i]);
 
@@ -125,22 +141,39 @@ void DownloadQueue::moveDownloads(const QList<quint64>& downloadIDRefs, const QL
          downloadIDsCopy.removeAt(j);
       }
 
+      // If the download reference isn't defined we have to search one among 'downloadIDRefsCopy'.
+      int k;
+      if (downloadIDRef == 0 && (k = downloadIDRefsCopy.indexOf(this->downloads[i]->getID())) != -1)
+      {
+         if (position == Protos::GUI::MoveDownloads::BEFORE)
+         {
+            downloadIDRef = this->downloads[i]->getID();
+         }
+         else
+         {
+            if (downloadIDRefsCopy.size() == 1)
+               downloadIDRef = downloadIDRefsCopy.first();
+            else
+               downloadIDRefsCopy.removeAt(k);
+         }
+      }
+
       if (this->downloads[i]->getID() == downloadIDRef)
       {
          iRef = i;
          int shift = 0;
          for (int j = 0; j < iToMove.size(); j++)
          {
-            if (iToMove[j] == iRef && moveBefore)
+            if (iToMove[j] == iRef && position == Protos::GUI::MoveDownloads::BEFORE)
                iRef++;
             else
             {
-               int whereToInsert = j == 0 && !moveBefore ? ++iRef : iRef;
-               int whereToRemove = iToMove[j] + shift;
+               const int whereToInsert = position == Protos::GUI::MoveDownloads::AFTER ? iRef + 1 : iRef;
+               const int whereToRemove = iToMove[j] + shift;
 
                this->updateMarkersMove(whereToInsert, whereToRemove, this->downloads[whereToRemove]);
 
-               this->downloads.insert(whereToInsert, this->downloads[iToMove[j] + shift]);
+               this->downloads.insert(whereToInsert, this->downloads[whereToRemove]);
                this->downloads.removeAt(whereToRemove);
                shift--;
             }
@@ -148,7 +181,6 @@ void DownloadQueue::moveDownloads(const QList<quint64>& downloadIDRefs, const QL
          iToMove.clear();
       }
    }
-   */
 }
 
 /**
@@ -156,7 +188,7 @@ void DownloadQueue::moveDownloads(const QList<quint64>& downloadIDRefs, const QL
   * It uses QList::erase(iterator begin, iterator end) to improve the performance.
   * @return Returns 'true' is the list has been altered.
   */
-bool DownloadQueue::removeDownloads(DownloadPredicate& predicate)
+bool DownloadQueue::removeDownloads(const DownloadPredicate& predicate)
 {
    bool queueChanged = false;
    QList<Download*> downloadsToDelete;
@@ -169,8 +201,11 @@ bool DownloadQueue::removeDownloads(DownloadPredicate& predicate)
       {
          queueChanged = true;
          (*j)->setAsDeleted();
-         this->downloadsIndexedBySourcePeerID.remove((*j)->getPeerSource()->getID(), *j);
+         if (FileDownload* fileDownload = dynamic_cast<FileDownload*>(*j))
+            this->downloadsSortedByTime.remove(fileDownload->getLastTimeGetAllUnfinishedChunks(), fileDownload);
+         this->downloadsIndexedBySourcePeer.remove((*j)->getPeerSource(), *j);
          downloadsToDelete << *j;
+         this->erroneousDownloads.removeOne(*j);
          ++j;
 
          this->updateMarkersRemove(position);
@@ -219,15 +254,50 @@ bool DownloadQueue::pauseDownloads(QList<quint64> IDs, bool pause)
    return stateChanged;
 }
 
-bool DownloadQueue::isEntryAlreadyQueued(const Protos::Common::Entry& localEntry, const Common::Hash& peerSourceID)
+/**
+  * To know if a given entry is already in queue. It depends of (shared dir id, name, path).
+  */
+bool DownloadQueue::isEntryAlreadyQueued(const Protos::Common::Entry& localEntry)
 {
-   for (QMultiHash<Common::Hash, Download*>::iterator i = this->downloadsIndexedBySourcePeerID.find(peerSourceID); i != this->downloadsIndexedBySourcePeerID.end() && i.key() == peerSourceID; ++i)
+   for (QListIterator<Download*> i(this->downloads); i.hasNext();)
    {
-      Download* download = i.value();
-      if (download->getLocalEntry().shared_dir().id().hash() == localEntry.shared_dir().id().hash() && download->getLocalEntry().path() == localEntry.path() && download->getLocalEntry().name() == localEntry.name())
+      const Download* download = i.next();
+      if (
+         download->getLocalEntry().name() == localEntry.name() &&
+         download->getLocalEntry().path() == localEntry.path() &&
+         (!localEntry.has_shared_dir() || download->getLocalEntry().shared_dir().id().hash() == localEntry.shared_dir().id().hash())
+      )
          return true;
    }
    return false;
+}
+
+void DownloadQueue::setDownloadAsErroneous(Download* download)
+{
+   this->erroneousDownloads << download;
+}
+
+Download* DownloadQueue::getAnErroneousDownload()
+{
+   if (!this->erroneousDownloads.isEmpty())
+      return this->erroneousDownloads.takeFirst();
+   return 0;
+}
+
+QList< QSharedPointer<IChunkDownload> > DownloadQueue::getTheOldestUnfinishedChunks(int n)
+{
+   QList< QSharedPointer<IChunkDownload> > unfinishedChunks;
+
+   for (QMutableMapIterator<QTime, FileDownload*> i(this->downloadsSortedByTime); i.hasNext() && unfinishedChunks.size() < n;)
+   {
+      i.next();
+      if (i.value()->getStatus() == COMPLETE || i.value()->getStatus() == DELETED)
+         i.remove();
+      else
+         i.value()->getUnfinishedChunks(unfinishedChunks, n - unfinishedChunks.size());
+   }
+
+   return unfinishedChunks;
 }
 
 /**
@@ -239,21 +309,21 @@ Protos::Queue::Queue DownloadQueue::loadFromFile()
 
    try
    {
-      Common::PersistentData::getValue(Common::FILE_QUEUE, savedQueue, Common::Global::LOCAL);
+      Common::PersistentData::getValue(Common::Constants::FILE_QUEUE, savedQueue, Common::Global::LOCAL);
       if (static_cast<int>(savedQueue.version()) != FILE_QUEUE_VERSION)
       {
-         L_USER(QString(QObject::tr("The version (%1) of the queue file \"%2\" doesn't match the current version (%3). Queue will be reset.")).arg(savedQueue.version()).arg(Common::FILE_QUEUE).arg(FILE_QUEUE_VERSION));
-         Common::PersistentData::rmValue(Common::FILE_QUEUE, Common::Global::LOCAL);
+         L_USER(QString(QObject::tr("The version (%1) of the queue file \"%2\" doesn't match the current version (%3). Queue will be reset.")).arg(savedQueue.version()).arg(Common::Constants::FILE_QUEUE).arg(FILE_QUEUE_VERSION));
+         Common::PersistentData::rmValue(Common::Constants::FILE_QUEUE, Common::Global::LOCAL);
          savedQueue.Clear();
       }
    }
    catch (Common::UnknownValueException& e)
    {
-      L_WARN(QString("The download queue file cache cannot be retrived (the file doesn't exist) : %1").arg(Common::FILE_QUEUE));
+      L_WARN(QString("The download queue file cache cannot be retrived (the file doesn't exist) : %1").arg(Common::Constants::FILE_QUEUE));
    }
    catch (...)
    {
-      L_WARN(QString("The download queue file cache cannot be retrived (Unkown exception) : %1").arg(Common::FILE_QUEUE));
+      L_WARN(QString("The download queue file cache cannot be retrived (Unkown exception) : %1").arg(Common::Constants::FILE_QUEUE));
    }
 
    return savedQueue;
@@ -273,12 +343,19 @@ void DownloadQueue::saveToFile() const
 
    try
    {
-      Common::PersistentData::setValue(Common::FILE_QUEUE, savedQueue, Common::Global::LOCAL);
+      Common::PersistentData::setValue(Common::Constants::FILE_QUEUE, savedQueue, Common::Global::LOCAL);
    }
    catch (Common::PersistentDataIOException& err)
    {
       L_ERRO(err.message);
    }
+}
+
+void DownloadQueue::fileDownloadTimeChanged(QTime oldTime)
+{
+   FileDownload* fileDownload = static_cast<FileDownload*>(this->sender());
+   this->downloadsSortedByTime.remove(oldTime, fileDownload);
+   this->downloadsSortedByTime.insert(fileDownload->getLastTimeGetAllUnfinishedChunks(), fileDownload);
 }
 
 void DownloadQueue::updateMarkersInsert(int position, Download* download)

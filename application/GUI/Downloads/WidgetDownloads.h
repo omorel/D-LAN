@@ -27,6 +27,7 @@
 #include <Protos/gui_settings.pb.h>
 
 #include <Common/RemoteCoreController/ICoreConnection.h>
+#include <Common/Tree.h>
 
 #include <CheckBoxList.h>
 #include <CheckBoxModel.h>
@@ -65,6 +66,7 @@ namespace GUI
       void displayContextMenuDownloads(const QPoint& point);
       void downloadDoubleClicked(const QModelIndex& index);
       void openLocationSelectedEntries();
+      void moveSelectedEntriesToTop();
       void switchView();
       void removeCompletedFiles();
       void removeSelectedEntries();
@@ -76,6 +78,11 @@ namespace GUI
       void switchView(Protos::GUI::Settings::DownloadView view);
       void updateCheckBoxElements();
       QPair<QList<quint64>, bool> getDownloadIDsToPause() const;
+
+      void saveTreeViewState();
+      void saveTreeViewState(const QModelIndex& index, SimpleTree<quint32>* tree);
+      void restoreTreeViewState();
+      void restoreTreeViewState(const QModelIndex& index, SimpleTree<quint32>* tree);
 
       Ui::WidgetDownloads *ui;
       CheckBoxList* filterStatusList;
@@ -89,6 +96,8 @@ namespace GUI
       DownloadsModel* currentDownloadsModel;
 
       DownloadsDelegate downloadsDelegate;
+
+      SimpleTree<quint32>* treeViewState;
    };
 }
 

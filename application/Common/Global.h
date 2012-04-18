@@ -37,6 +37,11 @@ namespace Common
          const QString errorMessage;
       };
 
+      static QString getVersion();
+      static QString getVersionTag();
+      static QString getSystemVersion();
+      static QString getVersionFull();
+
       template <typename T>
       static void sortedAdd(T* entry, QList<T*>& list, bool (*lesserThan)(const T&, const T&) = 0);
       template <typename T>
@@ -56,6 +61,7 @@ namespace Common
 
       static QString toLowerAndRemoveAccents(const QString& str);
       static QStringList splitInWords(const QString& words);
+      static int strcmpi(const std::string& s1, const std::string& s2);
 
       static quint32 hashStringToInt(const QString& str);
 

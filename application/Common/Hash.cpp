@@ -188,8 +188,16 @@ Hash Hash::rand()
 {
    Hash hash;
    for (int i = 0; i < HASH_SIZE; i++)
-      hash.data->hash[i] = static_cast<char>(mtrand.randInt(255));
+      hash.data->hash[i] = static_cast<char>(Hash::mtrand.randInt(255));
+   return hash;
+}
 
+Hash Hash::rand(quint32 seed)
+{
+   MTRand mtrand(seed);
+   Hash hash;
+   for (int i = 0; i < HASH_SIZE; i++)
+      hash.data->hash[i] = static_cast<char>(mtrand.randInt(255));
    return hash;
 }
 
@@ -222,6 +230,8 @@ Hash Hash::fromStr(const QString& str)
   * To create hash from row data.
   */
 
+MTRand Hasher::mtrand;
+
 Hasher::Hasher() :
    cryptographicHash(QCryptographicHash::Sha1)
 {
@@ -229,23 +239,33 @@ Hasher::Hasher() :
 }
 
 /**
+  * Deprecated, it's useless to have a hardcoded salt.
+  *
   * May be called right after the constructor or the 'reset()' method.
   * @param salt Must be Hash::HASH_SIZE bytes length.
   */
-void Hasher::addPredefinedSalt()
+/*void Hasher::addPredefinedSalt()
 {
    static const char salt[] = {
-      0xba, 0xe5, 0x4d, 0xf2,
-      0xab, 0x84, 0xb5, 0xce,
-      0xf9, 0x9a, 0x6c, 0x78,
-      0x86, 0x7f, 0x6d, 0x7b,
-      0xcb, 0xdc, 0xc1, 0x6a,
-      0xe5, 0x03, 0x9a, 0x3c,
-      0x75, 0xca, 0x4d, 0xdc,
-      0x90, 0x96, 0x10, 0xef
+      -0x46, -0x1B,  0x4D, -0x0E,
+      -0x55, -0x7C, -0x4B, -0x32,
+      -0x07, -0x66,  0x6C,  0x78,
+      -0x7a,  0x7f,  0x6d,  0x7B,
+      -0x35, -0x24, -0x3F,  0x6A,
+      -0x1A,  0x03, -0x66,  0x3c,
+       0x75, -0x36,  0x4d, -0x24,
+      -0x70,  0x6A,  0x10,  0x11
    };
 
    this->cryptographicHash.addData(salt, sizeof(salt));
+}*/
+
+void Hasher::addSalt(quint64 salt)
+{
+   QByteArray saltArray(8, 0);
+   for (int i = 0; i < 8; i++)
+      saltArray[i] = salt >> (8*i) & 0xFF;
+   this->cryptographicHash.addData(saltArray);
 }
 
 /**
@@ -287,12 +307,34 @@ Common::Hash Hasher::hash(const Common::Hash& hash)
    return hasher.getResult();
 }
 
-Common::Hash Hasher::hashWithSalt(const QString& str)
+/**
+ * Returns hash(str) + salt.
+ */
+Common::Hash Hasher::hashWithSalt(const QString& str, quint64 salt)
 {
    const QByteArray data = str.toUtf8();
    Hasher hasher;
-   hasher.addPredefinedSalt();
    hasher.addData(data.constData(), data.size());
+   hasher.addSalt(salt);
    return hasher.getResult();
 }
 
+Common::Hash Hasher::hashWithSalt(const Common::Hash& hash, quint64 salt)
+{
+   Hasher hasher;
+   hasher.addData(hash.getData(), Hash::HASH_SIZE);
+   hasher.addSalt(salt);
+   return hasher.getResult();
+}
+
+Hash Hasher::hashWithRandomSalt(const QString& str, quint64& salt)
+{
+   salt = static_cast<quint64>(Hash::mtrand.randInt()) << 32 | Hash::mtrand.randInt();
+   return Hasher::hashWithSalt(str, salt);
+}
+
+Hash Hasher::hashWithRandomSalt(const Common::Hash& hash, quint64& salt)
+{
+   salt = static_cast<quint64>(Hash::mtrand.randInt()) << 32 | Hash::mtrand.randInt();
+   return Hasher::hashWithSalt(hash, salt);
+}

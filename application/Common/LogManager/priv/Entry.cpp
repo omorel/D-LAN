@@ -24,7 +24,8 @@ using namespace LM;
 
 #include <Exceptions.h>
 
-const QString Entry::DATE_TIME_FORMAT("dd-MM-yyyy HH:mm:ss");
+const QString Entry::DATE_TIME_FORMAT("yyyy-MM-dd HH:mm:ss");
+const QString Entry::DATE_TIME_FORMAT_WITH_MS("yyyy-MM-dd HH:mm:ss.zzz");
 const QString Entry::SEVERITIES_STR[] = {"Fatal", "Error", "Warning", "Debug", "User", "Unkown"};
 QRegExp Entry::lineRegExp("(\\S{10} \\S{8})\\.(\\d{3}) \\[(.+)\\] \\{(.+)\\} \\((\\w+)\\) (?:<(\\S+:\\d+)> )?: (.*)");
 
@@ -54,13 +55,12 @@ Entry::Entry(const QString& line) :
       this->source = capturedTexts[6];
       this->message = capturedTexts[7];
    }
-
-   this->message.replace("<lf>", "\n");
 }
 
 Entry::Entry(const QDateTime& dateTime, Severity severity, const QString& name, const QString& thread, const QString& source, const QString& message) :
    date(dateTime), severity(severity), name(name), thread(thread), source(source), message(message)
 {
+   this->message.replace('\n', "<lf>");
 }
 
 /**
@@ -68,9 +68,6 @@ Entry::Entry(const QDateTime& dateTime, Severity severity, const QString& name, 
   */
 QString Entry::toStrLine() const
 {
-   QString messageWithoutEndLine(this->message);
-   messageWithoutEndLine.replace('\n', "<lf>");
-
    QString formatedMessage =
       QString(!this->source.isNull() ? "%1 [%2] {%3} (%4) <%5> : %6" : "%1 [%2] {%3} (%4) : %5").arg
       (
@@ -83,7 +80,7 @@ QString Entry::toStrLine() const
    if (!this->source.isNull())
       formatedMessage = formatedMessage.arg(this->source);
 
-   return formatedMessage.arg(messageWithoutEndLine);
+   return formatedMessage.arg(this->message);
 }
 
 QDateTime Entry::getDate() const
@@ -94,9 +91,9 @@ QDateTime Entry::getDate() const
 QString Entry::getDateStr(bool withMs) const
 {
    if (withMs)
-      return date.toString("yyyy-MM-dd HH:mm:ss.zzz");
+      return date.toString(DATE_TIME_FORMAT_WITH_MS);
    else
-      return date.toString("yyyy-MM-dd HH:mm:ss");
+      return date.toString(DATE_TIME_FORMAT);
 }
 
 Severity Entry::getSeverity() const
@@ -127,6 +124,13 @@ QString Entry::getSource() const
 QString Entry::getMessage() const
 {
    return this->message;
+}
+
+QString Entry::getMessageWithLF() const
+{
+   QString messageCopy(this->message);
+   messageCopy.replace("<lf>", "\n");
+   return messageCopy;
 }
 
 QString Entry::severityToStr(Severity severity)

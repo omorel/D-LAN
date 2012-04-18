@@ -48,13 +48,16 @@ namespace RCC
    class CoreConnection : public ICoreConnection
    {
       Q_OBJECT
+      static const int DEFAULT_SOCKET_TIMEOUT = 6000; // 6 seconds.
+
    public:
-      CoreConnection();
+      CoreConnection(int socketTimeout = DEFAULT_SOCKET_TIMEOUT);
       ~CoreConnection();
 
       void connectToCore();
       void connectToCore(quint16 port);
       void connectToCore(const QString& address, quint16 port, Common::Hash password);
+      void connectToCore(const QString& address, quint16 port, const QString& password);
 
       Common::Hash getLocalID() const;
       Common::Hash getRemoteID() const;
@@ -68,7 +71,8 @@ namespace RCC
       void sendChatMessage(const QString& message);
       void setCoreSettings(const Protos::GUI::CoreSettings settings);
       void setCoreLanguage(const QLocale locale);
-      void setCorePassword(Common::Hash newPassword, Common::Hash oldPassword = Common::Hash());
+      bool setCorePassword(const QString& newPassword, const QString& oldPassword = QString());
+      void resetCorePassword();
 
       QSharedPointer<IBrowseResult> browse(const Common::Hash& peerID);
       QSharedPointer<IBrowseResult> browse(const Common::Hash& peerID, const Protos::Common::Entry& entry);
@@ -97,6 +101,8 @@ namespace RCC
       void tempDisconnected();
 
    private:
+      bool connectToCorePrepare(const QString& address);
+
       InternalCoreConnection* current();
       const InternalCoreConnection* current() const;
 
@@ -109,6 +115,8 @@ namespace RCC
       int currentConnected;
 
       bool connectingInProgress;
+
+      const int SOCKET_TIMEOUT;
    };
 }
 

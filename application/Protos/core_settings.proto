@@ -14,9 +14,9 @@ message Settings {
    
    optional uint32 chunk_size = 3 [default = 67108864]; // (64 MiB).
    optional uint32 buffer_size_reading = 4 [default = 131072]; // (128 KiB). Buffer used when reading files (uploading and computing hashes).
-   optional uint32 buffer_size_writing = 5 [default = 131072]; // (128 KiB). Buffer used when writing files (downloading).
+   optional uint32 buffer_size_writing = 5 [default = 524288]; // (512 KiB). Buffer used when writing files (downloading).
    optional uint32 socket_buffer_size = 6 [default = 131072]; // (128 KiB). Max size of the socket buffer, using when receiving or sending data over the sockets.
-   optional uint32 socket_timeout = 7 [default = 5000]; // [ms].
+   optional uint32 socket_timeout = 7 [default = 7000]; // [ms].
       
    // FileManager.
    optional uint32 minimum_duration_when_hashing = 20 [default = 3000]; // [ms].
@@ -48,7 +48,7 @@ message Settings {
    optional uint32 upload_thread_lifetime = 52 [default = 30000]; // [ms].
    
    // NetworkListener.
-   optional uint32 peer_imalive_period = 60 [default = 8000]; // [ms]. Send an IMAlive message each 8 s.
+   optional uint32 peer_imalive_period = 60 [default = 5000]; // [ms]. Send an IMAlive message each 5 s.
    optional uint32 unicast_base_port = 61 [default = 59487]; // If it's already taken we will look further to a free port. (UDP + TCP).
    optional uint32 multicast_port = 62 [default = 59486]; // (UDP)
    optional uint32 multicast_group = 63 [default = 3960285976]; // IPv4: 236.123.43.24 / IPv6: ff0e:ec0d:2b18::
@@ -56,18 +56,18 @@ message Settings {
    optional uint32 multicast_ttl = 64 [default = 31];
    optional uint32 max_udp_datagram_size = 65 [default = 8164]; // (~8 KiB). It doesn't include the IP+UDP header (28 bits).
    optional uint32 udp_read_buffer_size = 66 [default = 81640]; // (10 * 8KiB).
-   optional uint32 number_of_hashes_sent_imalive = 67 [default = 128];
    optional uint32 max_number_of_search_result_to_send = 68 [default = 300];
    optional uint32 max_number_of_result_shown = 69 [default = 5000]; // For one search we accept a maximum of 5000 results.
-   optional uint32 max_number_of_chat_message_saved = 70 [default = 500]; // When a chat message arrive we saved it into a queue. When a GUI connects this queue is sent.
+   optional uint32 max_number_of_chat_message_saved = 70 [default = 1000]; // When a chat message arrive we saved it into a queue. When a GUI connects this queue is sent.
    optional string listen_address = 86 [default = ""]; // If address is empty then listen to any adresses, in this case the protocol is given by 'listenAny'.
    optional Common.Interface.Address.Protocol listen_any = 87 [default = IPv4];
    
    // RemoteControlManager
    optional uint32 remote_control_port = 80 [default = 59485];
-   optional Common.Hash remote_password = 81; // Only used for non-local connection.
+   optional Common.Hash remote_password = 81; // Hashed + salted. Only used for non-local connection. If defined salt field must be set.
+   optional uint64 salt = 90 [default=42];
    optional uint32 remote_refresh_rate = 82 [default = 1000]; // [ms].
    optional uint32 remote_max_nb_connection = 83 [default = 5];
    optional uint32 search_lifetime = 84 [default = 5000]; // [ms]. (5s)
-   optional uint32 delay_gui_connection_fail = 88 [default = 1000]; // When a GUI fails to connect to the core (for example by giving a wrong password) the answer is delayed [ms]. (1s)
+   optional uint32 delay_gui_connection_fail = 88 [default = 200]; // When a GUI fails to connect to the core (for example by giving a wrong password) the answer is delayed [ms]. (0.2s)
 }

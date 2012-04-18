@@ -31,7 +31,7 @@
 #include <Common/Uncopyable.h>
 
 #include <IGetHashesResult.h>
-#include <priv/Socket.h>
+#include <priv/PeerMessageSocket.h>
 
 namespace PM
 {
@@ -39,16 +39,16 @@ namespace PM
    {
       Q_OBJECT
    public:
-      GetHashesResult(const Protos::Common::Entry& file, QSharedPointer<Socket> socket);
-      ~GetHashesResult();
+      GetHashesResult(const Protos::Common::Entry& file, QSharedPointer<PeerMessageSocket> socket);
       void start();
+      void doDeleteLater();
 
    private slots:
       void newMessage(Common::MessageHeader::MessageType type, const google::protobuf::Message& message);
 
    private:
       const Protos::Common::Entry file;
-      QSharedPointer<Socket> socket;
+      QSharedPointer<PeerMessageSocket> socket;
    };
 }
 

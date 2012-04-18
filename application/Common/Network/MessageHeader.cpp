@@ -33,6 +33,9 @@ using namespace Common;
   * See the *.proto files in "/application/Protos" for more information.
   */
 
+/**
+  * Builds a null header, it can be tested with 'isNull()'.
+  */
 MessageHeader::MessageHeader() :
    type(NULL_MESS), size(0)
 {}
@@ -97,6 +100,7 @@ QString MessageHeader::messToStr(MessageType type)
    case GUI_STATE_RESULT: return "STATE_RESULT";
    case GUI_EVENT_CHAT_MESSAGES:  return "EVENT_CHAT_MESSAGE";
    case GUI_EVENT_LOG_MESSAGE: return "EVENT_LOG_MESSAGE";
+   case GUI_ASK_FOR_AUTHENTICATION: return "ASK_FOR_AUTHENTICATION";
    case GUI_AUTHENTICATION: return "AUTHENTICATION";
    case GUI_AUTHENTICATION_RESULT: return "AUTHENTICATION_RESULT";
    case GUI_LANGUAGE: return "LANGUAGE";

@@ -28,7 +28,7 @@ using namespace GUI;
 
 /**
   * Ask the user to choose one or more directories.
-  * TODO : browse the remotes directories (Core) not the local ones.
+  * TODO: browse the remotes directories (Core) not the local ones.
   */
 QStringList Utils::askForDirectories(QSharedPointer<RCC::ICoreConnection> coreConnection, const QString& message)
 {
@@ -58,8 +58,8 @@ QStringList Utils::askForDirectories(QSharedPointer<RCC::ICoreConnection> coreCo
    else
    {
       RemoteFileDialog fileDialog;
-      fileDialog.setWindowTitle("Remote folder");
-      fileDialog.setText("Remote folder to share : ");
+      fileDialog.setWindowTitle("Remote directory");
+      fileDialog.setText("Remote directory to share : ");
       if (fileDialog.exec())
       {
          return QStringList() << fileDialog.getFolder();

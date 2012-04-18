@@ -64,7 +64,7 @@ namespace UM
 
       Common::TransferRateCalculator& transferRateCalculator;
 
-      bool networkError;
+      bool closeTheSocket;
       bool toStop;
    };
 }

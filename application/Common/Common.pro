@@ -31,7 +31,9 @@ SOURCES += Hash.cpp \
     ../Protos/core_protocol.pb.cc \
     ../Protos/common.pb.cc \
     ThreadPool.cpp \
-    Languages.cpp
+    Languages.cpp \
+    Constants.cpp \
+    FileLocker.cpp
 
 HEADERS += Hashes.h \
     Hash.h \
@@ -55,6 +57,7 @@ HEADERS += Hashes.h \
     ThreadPool.h \
     IRunnable.h \
     Languages.h \
-    Tree.h
+    Tree.h \
+    FileLocker.h
 
 

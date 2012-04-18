@@ -49,7 +49,7 @@ DirDownload::DirDownload(
 
 DirDownload::~DirDownload()
 {
-   this->status = DELETED;
+   this->setStatus(DELETED);
 
    this->occupiedPeersAskingForEntries.setPeerAsFree(this->peerSource);
 
@@ -78,6 +78,19 @@ bool DirDownload::retrieveEntries()
    this->getEntriesResult->start();
 
    return true;
+}
+
+bool DirDownload::updateStatus()
+{
+   if (Download::updateStatus())
+      return true;
+
+   if (!this->peerSource->isAvailable())
+      this->setStatus(UNKNOWN_PEER_SOURCE);
+   else
+      this->setStatus(QUEUED);
+
+   return false;
 }
 
 void DirDownload::result(const Protos::Core::GetEntriesResult& entries)

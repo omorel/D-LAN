@@ -26,12 +26,14 @@
 
 #include <Protos/common.pb.h>
 #include <Protos/core_settings.pb.h>
+#include <Protos/gui_protocol.pb.h>
 
 #include <Network/MessageHeader.h>
 #include <PersistentData.h>
 #include <Settings.h>
 #include <Global.h>
 #include <ZeroCopyStreamQIODevice.h>
+#include <ProtoHelper.h>
 using namespace Common;
 
 Tests::Tests()
@@ -40,7 +42,7 @@ Tests::Tests()
 
 void Tests::initTestCase()
 {
-   qDebug() << "Application folder path (where the settings and persistent data are put) : " << Global::getDataFolder(Common::Global::ROAMING, false);
+   qDebug() << "Application directory path (where the settings and persistent data are put) : " << Global::getDataFolder(Common::Global::ROAMING, false);
 }
 
 void Tests::nCombinations()
@@ -187,11 +189,11 @@ void Tests::removeSettings()
 void Tests::generateAHash()
 {
    const char array[Hash::HASH_SIZE] = {
-      0x2d, 0x73, 0x73, 0x6f,
-      0x34, 0xa7, 0x38, 0x37,
-      0xd4, 0x22, 0xf7, 0xab,
-      0xa2, 0x74, 0x0d, 0x84,
-      0x09, 0xac, 0x60, 0xdf
+       0x2d,  0x73,  0x73,  0x6f,
+       0x34, -0x59,  0x38,  0x37,
+      -0x2C,  0x22, -0x09, -0x55,
+      -0x5E,  0x74,  0x0D, -0x7C,
+       0x09, -0x54,  0x60, -0x21
    };
    QByteArray byteArray(array, Hash::HASH_SIZE);
 
@@ -223,11 +225,11 @@ void Tests::buildAnHashFromAString()
 void Tests::compareTwoHash()
 {
    const char array[Hash::HASH_SIZE] = {
-      0x2d, 0x73, 0x73, 0x6f,
-      0x34, 0xa7, 0x38, 0x37,
-      0xd4, 0x22, 0xf7, 0xab,
-      0xa2, 0x74, 0x0d, 0x84,
-      0x09, 0xac, 0x60, 0xdf
+       0x2d,  0x73,  0x73,  0x6f,
+       0x34, -0x59,  0x38,  0x37,
+      -0x2C,  0x22, -0x09, -0x55,
+      -0x5E,  0x74,  0x0D, -0x7C,
+       0x09, -0x54,  0x60, -0x21
    };
    QByteArray byteArray(array, Hash::HASH_SIZE);
    QString str("2d73736f34a73837d422f7aba2740d8409ac60df");
@@ -267,12 +269,12 @@ void Tests::hasher()
    Hash h3 = hasher.getResult();
 
    hasher.reset();
-   hasher.addPredefinedSalt();
+   hasher.addSalt(42);
    hasher.addData(str1, sizeof(str1));
    Hash h4 = hasher.getResult();
 
    hasher.reset();
-   hasher.addPredefinedSalt();
+   hasher.addSalt(42);
    hasher.addData(str2, sizeof(str2));
    Hash h5 = hasher.getResult();
 
@@ -286,13 +288,13 @@ void Tests::hasher()
 void Tests::messageHeader()
 {
    const char data[] = {
-      0x00, 0x00, 0x00, 0x01,
-      0x00, 0x00, 0x00, 0x2a,
-      0x2d, 0x73, 0x73, 0x6f,
-      0x34, 0xa7, 0x38, 0x37,
-      0xd4, 0x22, 0xf7, 0xab,
-      0xa2, 0x74, 0x0d, 0x84,
-      0x09, 0xac, 0x60, 0xdf
+      0x00,  0x00,  0x00,  0x01,
+      0x00,  0x00,  0x00,  0x2a,
+      0x2d,  0x73,  0x73,  0x6f,
+      0x34, -0x59,  0x38,  0x37,
+     -0x2C,  0x22, -0x09, -0x55,
+     -0x5E,  0x74,  0x0D, -0x7C,
+      0x09, -0x54,  0x60, -0x21
    };
 
    const QString peerID("2d73736f34a73837d422f7aba2740d8409ac60df");
@@ -358,5 +360,45 @@ void Tests::readAndWriteWithZeroCopyStreamQIODevice()
    QCOMPARE(QByteArray(hashMessage2.hash().data(), Hash::HASH_SIZE), QByteArray(hash2.getData(), Hash::HASH_SIZE));
 }
 
+/**
+  * TODO: add some tests for these functions:
+  *  - setLang(..)
+  *  - getLang(..)
+  *  - setIP(..)
+  *  - getIP(..)
+  *  - getRelativePath(..)
+  */
+void Tests::protoHelper()
+{
+   const QString path("path");
+   const QString name("name");
+
+   Protos::Common::Entry entry;
+   entry.set_type(Protos::Common::Entry::FILE);
+   entry.set_size(0);
+   ProtoHelper::setStr(entry, &Protos::Common::Entry::set_path, path);
+   ProtoHelper::setStr(entry, &Protos::Common::Entry::set_name, name);
+
+   QCOMPARE(ProtoHelper::getStr(entry, &Protos::Common::Entry::path), path);
+   QCOMPARE(ProtoHelper::getStr(entry, &Protos::Common::Entry::name), name);
+
+   Protos::GUI::CoreSettings::SharedDirectories sharedDirs;
+   const QList<QString> dirs = QList<QString>() << "abc" << "def" << "ghi";
+   foreach (QString dir, dirs)
+      ProtoHelper::addRepeatedStr(sharedDirs, &Protos::GUI::CoreSettings::SharedDirectories::add_dir, dir);
+   for (int i = 0; i < dirs.size(); i++)
+      QCOMPARE(ProtoHelper::getRepeatedStr(sharedDirs, &Protos::GUI::CoreSettings::SharedDirectories::dir, i), dirs[i]);
+
+   for (int i = 0; i < 5; i++)
+      entry.add_chunk()->set_hash(Hash::rand(i).getData(), Hash::HASH_SIZE);
+   const QString debugStr = ProtoHelper::getDebugStr(entry);
+   qDebug() << endl << "The protocol buffer message (Protos::Common::Entry):" << endl << debugStr;
+
+   QVERIFY(debugStr.indexOf("ac2f75c043fbc36709d315f2245746d8588c3ac1") != -1);
+   QVERIFY(debugStr.indexOf("25eb8c48ff89cb854fc09081cc47edfc8619b214") != -1);
+   QVERIFY(debugStr.indexOf("a80fed48162bd24b6807a2b15f4bd52f3f1fda94") != -1);
+   QVERIFY(debugStr.indexOf("6a98f983b8c80015fd93ca6bf9a98a9577a6e094") != -1);
+   QVERIFY(debugStr.indexOf("7aaeb7c5816857c832893afc676d5e37b73968a4") != -1);
+}
 
 

@@ -29,6 +29,7 @@ using namespace GUI;
 #include <QScrollBar>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QColor>
 
 #include <Protos/gui_settings.pb.h>
 
@@ -41,18 +42,14 @@ using namespace GUI;
 #include <StatusBar.h>
 #include <Log.h>
 
-/**
-  * Highlight ourself in the peers list.
-  */
 void PeerTableDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const
 {
-   const PeerListModel* model = static_cast<const PeerListModel*>(index.model());
-
    QStyleOptionViewItemV4 newOption(option);
    newOption.state = option.state & (~QStyle::State_HasFocus);
 
-   if (model->isOurself(index.row()))
-      painter->fillRect(option.rect, QColor(192, 255, 192));
+   // Show the selection only if the widget is active.
+   if (!(newOption.state & QStyle::State_Active))
+      newOption.state = newOption.state & (~QStyle::State_Selected);
 
    QStyledItemDelegate::paint(painter, newOption, index);
 }
@@ -108,8 +105,11 @@ MainWindow::MainWindow(QSharedPointer<RCC::ICoreConnection> coreConnection, QWid
    this->ui->butSearchOwnFiles->setMaximumWidth(24);
 #endif
 
+   this->peerListModel.setSortType(static_cast<Protos::GUI::Settings::PeerSortType>(SETTINGS.get<quint32>("peer_sort_type")));
+
    this->mdiAreaTabBar = this->ui->mdiArea->findChild<QTabBar*>();
    this->mdiAreaTabBar->setMovable(true);
+   this->mdiAreaTabBar->installEventFilter(this);
    connect(this->mdiAreaTabBar, SIGNAL(tabMoved(int, int)), this, SLOT(tabMoved(int, int)));
 
    StatusBar* statusBar = new StatusBar(this->coreConnection);
@@ -128,7 +128,7 @@ MainWindow::MainWindow(QSharedPointer<RCC::ICoreConnection> coreConnection, QWid
    this->ui->tblPeers->verticalHeader()->setDefaultSectionSize(QApplication::fontMetrics().height() + 2);
    this->ui->tblPeers->verticalHeader()->setVisible(false);
    this->ui->tblPeers->setSelectionBehavior(QAbstractItemView::SelectRows);
-   this->ui->tblPeers->setSelectionMode(QAbstractItemView::SingleSelection);
+   this->ui->tblPeers->setSelectionMode(QAbstractItemView::ExtendedSelection);
    this->ui->tblPeers->setShowGrid(false);
    this->ui->tblPeers->setAlternatingRowColors(true);
 
@@ -166,11 +166,13 @@ MainWindow::MainWindow(QSharedPointer<RCC::ICoreConnection> coreConnection, QWid
 
    this->restoreWindowsSettings();
 
+   this->restoreColorizedPeers();
+
    this->loadLanguage(this->widgetSettings->getCurrentLanguageFilename());
 
-   connect(this->coreConnection.data(), SIGNAL(connectingError(RCC::ICoreConnection::ConnectionErrorCode)), this, SLOT(coreConnectionError(RCC::ICoreConnection::ConnectionErrorCode)), Qt::QueuedConnection);
-   connect(this->coreConnection.data(), SIGNAL(connected()), this, SLOT(coreConnected()), Qt::QueuedConnection);
-   connect(this->coreConnection.data(), SIGNAL(disconnected()), this, SLOT(coreDisconnected()), Qt::QueuedConnection);
+   connect(this->coreConnection.data(), SIGNAL(connectingError(RCC::ICoreConnection::ConnectionErrorCode)), this, SLOT(coreConnectionError(RCC::ICoreConnection::ConnectionErrorCode)));
+   connect(this->coreConnection.data(), SIGNAL(connected()), this, SLOT(coreConnected()));
+   connect(this->coreConnection.data(), SIGNAL(disconnected(bool)), this, SLOT(coreDisconnected(bool)));
 
    this->coreConnection->connectToCore(SETTINGS.get<QString>("core_address"), SETTINGS.get<quint32>("core_port"), SETTINGS.get<Common::Hash>("password"));
 }
@@ -179,8 +181,7 @@ MainWindow::~MainWindow()
 {
    this->saveWindowsSettings();
 
-   this->coreConnection->disconnect(this); // To avoid calling 'coreDisconnected' after deleted 'this->ui'.
-   this->coreConnection->disconnectFromCore();
+   this->coreConnection->disconnect(this); // Disconnect all signals.
    this->logModel.disconnect(this);
 
    this->removeWidgetSettings();
@@ -190,7 +191,7 @@ MainWindow::~MainWindow()
 
 void MainWindow::loadLanguage(const QString& filename)
 {
-   this->translator.load(filename, QCoreApplication::applicationDirPath() + "/" + LANGUAGE_DIRECTORY);
+   this->translator.load(filename, QCoreApplication::applicationDirPath() + "/" + Common::Constants::LANGUAGE_DIRECTORY);
 }
 
 
@@ -238,11 +239,11 @@ void MainWindow::coreConnected()
    this->setApplicationStateAsConnected();
 }
 
-void MainWindow::coreDisconnected()
+void MainWindow::coreDisconnected(bool forced)
 {
    this->setApplicationStateAsDisconnected();
 
-   if (!this->coreConnection->isConnected())
+   if (!forced && !this->coreConnection->isConnecting())
    {
       QMessageBox msgBox(this);
       msgBox.setWindowTitle(tr("Connection lost"));
@@ -283,18 +284,40 @@ void MainWindow::displayContextMenuPeers(const QPoint& point)
       takeControlAction->setData(data);
    }
 
+   menu.addSeparator();
+
+   QAction* sortBySharingAmountAction = menu.addAction(tr("Sort by the amount of sharing"), this, SLOT(sortPeersBySharingAmount()));
+   QAction* sortByNickAction = menu.addAction(tr("Sort alphabetically"), this, SLOT(sortPeersByNick()));
+
+   sortBySharingAmountAction->setCheckable(true);
+   sortBySharingAmountAction->setChecked(this->peerListModel.getSortType() == Protos::GUI::Settings::BY_SHARING_AMOUNT);
+
+   sortByNickAction->setCheckable(true);
+   sortByNickAction->setChecked(this->peerListModel.getSortType() == Protos::GUI::Settings::BY_NICK);
+
+   menu.addSeparator();
+
+   menu.addAction(QIcon(":/icons/ressources/marble_red.png"), tr("Colorize in red"), this, SLOT(colorizeSelectedPeer()))->setData(QColor(128, 0, 0));
+   menu.addAction(QIcon(":/icons/ressources/marble_blue.png"), tr("Colorize in blue"), this, SLOT(colorizeSelectedPeer()))->setData(QColor(0, 0, 128));
+   menu.addAction(QIcon(":/icons/ressources/marble_green.png"), tr("Colorize in green"), this, SLOT(colorizeSelectedPeer()))->setData(QColor(0, 128, 0));
+   menu.addAction(tr("Uncolorize"), this, SLOT(uncolorizeSelectedPeer()));
+
    menu.exec(this->ui->tblPeers->mapToGlobal(point));
 }
 
 void MainWindow::browse()
 {
-   QModelIndex i = this->ui->tblPeers->currentIndex();
-   if (i.isValid())
+   foreach (QModelIndex i, this->ui->tblPeers->selectionModel()->selectedIndexes())
    {
-      Common::Hash peerID = this->peerListModel.getPeerID(i.row());
-      if (!peerID.isNull())
-         this->addWidgetBrowse(peerID);
+      if (i.isValid())
+      {
+         Common::Hash peerID = this->peerListModel.getPeerID(i.row());
+         if (!peerID.isNull())
+            this->addWidgetBrowse(peerID);
+      }
    }
+
+   this->ui->tblPeers->clearSelection();
 }
 
 void MainWindow::takeControlOfACore()
@@ -303,7 +326,7 @@ void MainWindow::takeControlOfACore()
    if (action)
    {
       QHostAddress address = action->data().value<QHostAddress>();
-      Common::Hash hashedPassword;
+      QString password;
 
       if (!Common::Global::isLocal(address))
       {
@@ -315,10 +338,11 @@ void MainWindow::takeControlOfACore()
 
          if (inputDialog.exec() == QDialog::Rejected || inputDialog.textValue().isEmpty())
             return;
-         hashedPassword = Common::Hasher::hashWithSalt(inputDialog.textValue());
+
+         password = inputDialog.textValue();
       }
 
-      this->coreConnection->connectToCore(address.toString(), SETTINGS.get<quint32>("core_port"), hashedPassword);
+      this->coreConnection->connectToCore(address.toString(), SETTINGS.get<quint32>("core_port"), password);
    }
 }
 
@@ -338,6 +362,89 @@ void MainWindow::txtSearchReturnPressed(Qt::KeyboardModifiers modifiers)
       this->searchOwnFiles();
    else
       this->searchOtherPeers();
+}
+
+void MainWindow::sortPeersBySharingAmount()
+{
+   this->peerListModel.setSortType(Protos::GUI::Settings::BY_SHARING_AMOUNT);
+   SETTINGS.set("peer_sort_type", static_cast<quint32>(Protos::GUI::Settings::BY_SHARING_AMOUNT));
+   SETTINGS.save();
+}
+
+void MainWindow::sortPeersByNick()
+{
+   this->peerListModel.setSortType(Protos::GUI::Settings::BY_NICK);
+   SETTINGS.set("peer_sort_type", static_cast<quint32>(Protos::GUI::Settings::BY_NICK));
+   SETTINGS.save();
+}
+
+/**
+  * Must be called only by a 'QAction' object whith a 'QColor' object as data.
+  */
+void MainWindow::colorizeSelectedPeer()
+{
+   const QColor color = static_cast<QAction*>(this->sender())->data().value<QColor>();
+
+   QSet<Common::Hash> peerIDs;
+   foreach (QModelIndex i, this->ui->tblPeers->selectionModel()->selectedIndexes())
+   {
+      this->peerListModel.colorize(i, color);
+      peerIDs << this->peerListModel.getPeerID(i.row());
+   }
+
+   // Update the settings.
+   Protos::GUI::Settings::HighlightedPeers highlightedPeers = SETTINGS.get<Protos::GUI::Settings::HighlightedPeers>("highlighted_peers");
+   for (int i = 0; i < highlightedPeers.peer_size() && !peerIDs.isEmpty(); i++)
+   {
+      const Common::Hash peerID(highlightedPeers.peer(i).id().hash());
+      if (peerIDs.contains(peerID))
+      {
+         peerIDs.remove(peerID);
+         highlightedPeers.mutable_peer(i)->set_color(color.rgb());
+      }
+   }
+
+   foreach (Common::Hash peerID, peerIDs)
+   {
+      Protos::GUI::Settings::HighlightedPeers::Peer* peer = highlightedPeers.add_peer();
+      peer->mutable_id()->set_hash(peerID.getData(), Common::Hash::HASH_SIZE);
+      peer->set_color(color.rgb());
+   }
+
+   SETTINGS.set("highlighted_peers", highlightedPeers);
+   SETTINGS.save();
+
+   this->ui->tblPeers->clearSelection();
+}
+
+void MainWindow::uncolorizeSelectedPeer()
+{
+   QSet<Common::Hash> peerIDs;
+   foreach (QModelIndex i, this->ui->tblPeers->selectionModel()->selectedIndexes())
+   {
+      this->peerListModel.uncolorize(i);
+      peerIDs << this->peerListModel.getPeerID(i.row());
+   }
+
+   // Update the settings.
+   Protos::GUI::Settings::HighlightedPeers highlightedPeers = SETTINGS.get<Protos::GUI::Settings::HighlightedPeers>("highlighted_peers");
+   for (int i = 0; i < highlightedPeers.peer_size() && !peerIDs.isEmpty(); i++)
+   {
+      const Common::Hash peerID(highlightedPeers.peer(i).id().hash());
+      if (peerIDs.contains(peerID))
+      {
+         peerIDs.remove(peerID);
+         if (i != highlightedPeers.peer_size() - 1)
+            highlightedPeers.mutable_peer()->SwapElements(i, highlightedPeers.peer_size() - 1);
+         highlightedPeers.mutable_peer()->RemoveLast();
+         i--;
+      }
+   }
+
+   SETTINGS.set("highlighted_peers", highlightedPeers);
+   SETTINGS.save();
+
+   this->ui->tblPeers->clearSelection();
 }
 
 /**
@@ -425,11 +532,21 @@ void MainWindow::search(bool ownFiles)
 
 bool MainWindow::eventFilter(QObject* obj, QEvent* event)
 {
-   if (event->type() == QEvent::KeyPress)
+   if (obj == this->widgetChat && event->type() == QEvent::KeyPress)
    {
       this->keyPressEvent(static_cast<QKeyEvent*>(event));
       return event->isAccepted();
    }
+   else if // Prohibits the user to close tab with the middle button.
+   (
+      obj == this->mdiAreaTabBar &&
+      (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick) &&
+      static_cast<QMouseEvent*>(event)->button() == Qt::MiddleButton
+   )
+   {
+      return true;
+   }
+
    return QMainWindow::eventFilter(obj, event);
 }
 
@@ -514,6 +631,13 @@ void MainWindow::restoreWindowsSettings()
    if (state.isEmpty())
       state = QByteArray::fromHex("000000ff00000000fd0000000200000000000000bf000000e1fc0200000002fb000000140064006f0063006b00530065006100720063006801000000000000001c0000001c0000001cfb000000120064006f0063006b005000650065007200730100000020000000c10000004b00ffffff00000003000003840000005dfc0100000001fb0000000e0064006f0063006b004c006f00670000000000000003840000006100ffffff000002c1000000e100000004000000040000000800000008fc00000000");
    this->restoreState(state);
+}
+
+void MainWindow::restoreColorizedPeers()
+{
+   Protos::GUI::Settings::HighlightedPeers highlightedPeers = SETTINGS.get<Protos::GUI::Settings::HighlightedPeers>("highlighted_peers");
+   for (int i = 0; i < highlightedPeers.peer_size(); i++)
+      this->peerListModel.colorize(highlightedPeers.peer(i).id().hash(), QColor(highlightedPeers.peer(i).color()));
 }
 
 /**
@@ -632,8 +756,6 @@ WidgetBrowse* MainWindow::addWidgetBrowse(const Common::Hash& peerID)
    widgetBrowse->setWindowState(Qt::WindowMaximized);
    this->widgetsBrowse << widgetBrowse;
 
-   QTabBar* tab = this->ui->mdiArea->findChild<QTabBar*>();
-
    QWidget* buttons = new QWidget();
 
    TabCloseButton* closeButton = new TabCloseButton(widgetBrowse, buttons);
@@ -647,7 +769,7 @@ WidgetBrowse* MainWindow::addWidgetBrowse(const Common::Hash& peerID)
    layButtons->addWidget(refreshButton);
    layButtons->addWidget(closeButton);
 
-   tab->setTabButton(tab->count() - 1, QTabBar::RightSide, buttons);
+   this->mdiAreaTabBar->setTabButton(this->mdiAreaTabBar->count() - 1, QTabBar::RightSide, buttons);
 
    return widgetBrowse;
 }
@@ -667,10 +789,9 @@ WidgetSearch* MainWindow::addWidgetSearch(const QString& term, bool searchInOwnF
    this->widgetsSearch << widgetSearch;
    connect(widgetSearch, SIGNAL(browse(const Common::Hash&, const Protos::Common::Entry&)), this, SLOT(addWidgetBrowse(const Common::Hash&, const Protos::Common::Entry&)));
 
-   QTabBar* tab = ui->mdiArea->findChild<QTabBar*>();
    TabCloseButton* closeButton = new TabCloseButton(widgetSearch);
    connect(closeButton, SIGNAL(clicked(QWidget*)), this, SLOT(removeWidget(QWidget*)));
-   tab->setTabButton(tab->count() - 1, QTabBar::RightSide, closeButton);
+   this->mdiAreaTabBar->setTabButton(this->mdiAreaTabBar->count() - 1, QTabBar::RightSide, closeButton);
 
    return widgetSearch;
 }

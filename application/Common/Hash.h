@@ -41,7 +41,6 @@ namespace Common
    class Hasher;
    class Hash
    {
-   private:
       static MTRand mtrand;
 
    public:
@@ -63,13 +62,14 @@ namespace Common
         * The length of the returned value is exactly HASH_SIZE.
         */
       inline const char* getData() const { return this->data->hash; }
-      inline QByteArray getByteArray() const { return QByteArray(this->data->hash); }
+      inline QByteArray getByteArray() const { return QByteArray(this->data->hash, HASH_SIZE); }
 
       QString toStr() const;
       QString toStrCArray() const;
       bool isNull() const;
 
       static Hash rand();
+      static Hash rand(quint32 seed);
       static Hash fromStr(const QString& str);
 
    private:
@@ -141,16 +141,22 @@ namespace Common
 
    class Hasher : Uncopyable
    {
+      static MTRand mtrand;
+
    public:
       Hasher();
-      void addPredefinedSalt();
+      // void addPredefinedSalt(); Deprecated.
+      void addSalt(quint64 salt);
       void addData(const char*, int size);
       Hash getResult();
       void reset();
 
       static Common::Hash hash(const QString& str);
       static Common::Hash hash(const Common::Hash& hash);
-      static Common::Hash hashWithSalt(const QString& str);
+      static Common::Hash hashWithSalt(const QString& str, quint64 salt);
+      static Common::Hash hashWithSalt(const Common::Hash& hash, quint64 salt);
+      static Common::Hash hashWithRandomSalt(const QString& str, quint64& salt);
+      static Common::Hash hashWithRandomSalt(const Common::Hash& hash, quint64& salt);
 
    private:
       QCryptographicHash cryptographicHash;

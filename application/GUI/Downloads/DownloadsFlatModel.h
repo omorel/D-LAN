@@ -28,7 +28,7 @@ namespace GUI
    class DownloadsFlatModel : public DownloadsModel
    {
       Q_OBJECT
-      static const int WEIGHT_LAST_ETA = 5; // Used in the weighted mean computation.
+      static const int WEIGHT_LAST_ETA = 3; // Used in the weighted mean computation.
 
    public:
       DownloadsFlatModel(QSharedPointer<RCC::ICoreConnection> coreConnection, const PeerListModel& peerListModel, const DirListModel& sharedDirsModel, const IFilter<DownloadFilterStatus>& filter);
@@ -42,11 +42,12 @@ namespace GUI
       bool isDownloadPaused(const QModelIndex& index) const;
       bool isFileLocationKnown(const QModelIndex& index) const;
       bool isFileComplete(const QModelIndex& index) const;
+      bool isSourceAlive(const QModelIndex& index) const;
+      Protos::Common::Entry::Type getType(const QModelIndex& index) const;
 
       QString getPath(const QModelIndex& index, bool appendFilename = true) const;
 
       int rowCount(const QModelIndex& parent = QModelIndex()) const;
-      int columnCount(const QModelIndex& parent = QModelIndex()) const;
       QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const;
       Qt::DropActions supportedDropActions() const;
       Qt::ItemFlags flags(const QModelIndex& index) const;

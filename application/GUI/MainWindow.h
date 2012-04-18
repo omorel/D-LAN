@@ -78,7 +78,7 @@ namespace GUI
 
       void coreConnectionError(RCC::ICoreConnection::ConnectionErrorCode errorCode);
       void coreConnected();
-      void coreDisconnected();
+      void coreDisconnected(bool forced);
 
       void tabMoved(int from, int to);
 
@@ -88,6 +88,11 @@ namespace GUI
       void searchOtherPeers();
       void searchOwnFiles();
       void txtSearchReturnPressed(Qt::KeyboardModifiers modifiers);
+
+      void sortPeersBySharingAmount();
+      void sortPeersByNick();
+      void colorizeSelectedPeer();
+      void uncolorizeSelectedPeer();
 
       void removeWidget(QWidget* widget);
 
@@ -108,6 +113,8 @@ namespace GUI
 
       void saveWindowsSettings();
       void restoreWindowsSettings();
+
+      void restoreColorizedPeers();
 
       void removeMdiSubWindow(QMdiSubWindow* mdiSubWindow);
 

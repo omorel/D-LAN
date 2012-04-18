@@ -55,6 +55,7 @@ UDPListener::UDPListener(
    QSharedPointer<DM::IDownloadManager> downloadManager,
    quint16 unicastPort
 ) :
+   MAX_UDP_DATAGRAM_PAYLOAD_SIZE(static_cast<int>(SETTINGS.get<quint32>("max_udp_datagram_size"))),
    bodyBuffer(UDPListener::buffer + Common::MessageHeader::HEADER_SIZE),
    UNICAST_PORT(unicastPort),
    MULTICAST_PORT(SETTINGS.get<quint32>("multicast_port")),
@@ -64,6 +65,7 @@ UDPListener::UDPListener(
    uploadManager(uploadManager),
    downloadManager(downloadManager),
    currentIMAliveTag(0),
+   nextHashRequestType(FIRST_HASHES),
    loggerIMAlive(LM::Builder::newLogger("NetworkListener (IMAlive)"))
 {
    this->initMulticastUDPSocket();
@@ -79,16 +81,13 @@ void UDPListener::send(Common::MessageHeader::MessageType type, const Common::Ha
 {
    PM::IPeer* peer = this->peerManager->getPeer(peerID);
    if (!peer)
-   {
-      L_WARN(QString("Unable to find the peer %1").arg(peerID.toStr()));
       return;
-   }
 
    int messageSize;
    if (!(messageSize = this->writeMessageToBuffer(type, message)))
       return;
 
-   L_DEBU(QString("Send unicast UDP to %1 : header.getType() = %2, message size = %3 \n%4").
+   L_DEBU(QString("Send unicast UDP to %1, header.getType(): %2, message size: %3 \n%4").
       arg(peer->toStringLog()).
       arg(Common::MessageHeader::messToStr(type)).
       arg(messageSize).
@@ -96,7 +95,7 @@ void UDPListener::send(Common::MessageHeader::MessageType type, const Common::Ha
    );
 
    if (this->unicastSocket.writeDatagram(this->buffer, messageSize, peer->getIP(), peer->getPort()) == -1)
-      L_WARN("Unable to send datagram");
+      L_WARN(QString("Unable to send datagram (unicast): error: %1").arg(this->unicastSocket.errorString()));
 }
 
 /**
@@ -121,15 +120,18 @@ void UDPListener::send(Common::MessageHeader::MessageType type, const google::pr
 #endif
 
    if (this->multicastSocket.writeDatagram(this->buffer, messageSize, this->multicastGroup, MULTICAST_PORT) == -1)
-      L_WARN("Unable to send datagram");
+      L_WARN(QString("Unable to send datagram (multicast): error: %1").arg(this->unicastSocket.errorString()));
 }
 
 void UDPListener::sendIMAliveMessage()
 {
    Protos::Core::IMAlive IMAliveMessage;
    IMAliveMessage.set_version(PROTOCOL_VERSION);
+   ProtoHelper::setStr(IMAliveMessage, &Protos::Core::IMAlive::set_core_version, Common::Global::getVersionFull());
    IMAliveMessage.set_port(this->UNICAST_PORT);
-   Common::ProtoHelper::setStr(IMAliveMessage, &Protos::Core::IMAlive::set_nick, this->peerManager->getNick());
+
+   const QString& nick = this->peerManager->getSelf()->getNick();
+   Common::ProtoHelper::setStr(IMAliveMessage, &Protos::Core::IMAlive::set_nick, nick.length() > MAX_NICK_LENGTH ? nick.left(MAX_NICK_LENGTH) : nick);
 
    IMAliveMessage.set_amount(this->fileManager->getAmount());
    IMAliveMessage.set_download_rate(this->downloadManager->getDownloadRate());
@@ -140,12 +142,36 @@ void UDPListener::sendIMAliveMessage()
    this->currentIMAliveTag |= this->mtrand.randInt();
    IMAliveMessage.set_tag(this->currentIMAliveTag);
 
-   static const quint32 NUMBER_OF_HASHES_TO_SEND = SETTINGS.get<quint32>("number_of_hashes_sent_imalive");
-   this->currentChunkDownloads = this->downloadManager->getUnfinishedChunks(NUMBER_OF_HASHES_TO_SEND);
+   // We fill the rest of the message with a maximum of needed hashes.
+   const int numberOfHashesToSend = (this->MAX_UDP_DATAGRAM_PAYLOAD_SIZE - IMAliveMessage.ByteSize() - Common::MessageHeader::HEADER_SIZE) / (Common::Hash::HASH_SIZE + 4); // "4" is the overhead added by protobuff for each hash.
+
+   // The requested hashes method alternates from the first hashes and the oldest hashes.
+   // We are trying to have the knowledge about who has which chunk for the whole download queue (IDownloadManager::getTheOldestUnfinishedChunks(..))
+   // and for the chunks we want to download first (IDownloadManager::getTheFirstUnfinishedChunks(..)).
+   switch (this->nextHashRequestType)
+   {
+   case FIRST_HASHES:
+      this->currentChunkDownloads = this->downloadManager->getTheFirstUnfinishedChunks(numberOfHashesToSend);
+      this->nextHashRequestType = OLDEST_HASHES;
+      break;
+   case OLDEST_HASHES:
+      this->currentChunkDownloads = this->downloadManager->getTheOldestUnfinishedChunks(numberOfHashesToSend);
+      this->nextHashRequestType = FIRST_HASHES;
+      break;
+   }
+
    IMAliveMessage.mutable_chunk()->Reserve(this->currentChunkDownloads.size());
    for (QListIterator< QSharedPointer<DM::IChunkDownload> > i(this->currentChunkDownloads); i.hasNext();)
    {
-      IMAliveMessage.add_chunk()->set_hash(i.next()->getHash().getData(), Common::Hash::HASH_SIZE);
+      QSharedPointer<DM::IChunkDownload> chunkDownload = i.next();
+      IMAliveMessage.add_chunk()->set_hash(chunkDownload->getHash().getData(), Common::Hash::HASH_SIZE);
+
+      // If we already have the chunk...
+      QSharedPointer<FM::IChunk> chunk = this->fileManager->getChunk(chunkDownload->getHash());
+      if (!chunk.isNull() && chunk->isComplete())
+         chunkDownload->addPeer(this->peerManager->getSelf());
+      else
+         chunkDownload->rmPeer(this->peerManager->getSelf());
    }
 
    this->send(Common::MessageHeader::CORE_IM_ALIVE, IMAliveMessage);
@@ -153,7 +179,7 @@ void UDPListener::sendIMAliveMessage()
 
 Common::Hash UDPListener::getOwnID() const
 {
-   return this->peerManager->getID();
+   return this->peerManager->getSelf()->getID();
 }
 
 void UDPListener::rebindSockets()
@@ -204,7 +230,8 @@ void UDPListener::processPendingMulticastDatagrams()
                peerAddress,
                IMAliveMessage.port(),
                Common::ProtoHelper::getStr(IMAliveMessage, &Protos::Core::IMAlive::nick),
-               IMAliveMessage.amount()
+               IMAliveMessage.amount(),
+               Common::ProtoHelper::getStr(IMAliveMessage, &Protos::Core::IMAlive::core_version)
             );
 
             if (IMAliveMessage.chunk_size() > 0)
@@ -237,7 +264,7 @@ void UDPListener::processPendingMulticastDatagrams()
          }
          break;
 
-      case Common::MessageHeader::CORE_FIND: // Find.
+      case Common::MessageHeader::CORE_FIND:
          {
             Protos::Core::Find findMessage;
             findMessage.ParseFromArray(this->bodyBuffer, header.getSize());
@@ -246,7 +273,7 @@ void UDPListener::processPendingMulticastDatagrams()
                this->fileManager->find(
                   Common::ProtoHelper::getStr(findMessage, &Protos::Core::Find::pattern),
                   SETTINGS.get<quint32>("max_number_of_search_result_to_send"),
-                  SETTINGS.get<quint32>("max_udp_datagram_size") - Common::MessageHeader::HEADER_SIZE
+                  this->MAX_UDP_DATAGRAM_PAYLOAD_SIZE - Common::MessageHeader::HEADER_SIZE
                );
 
             for (QMutableListIterator<Protos::Common::FindResult> i(results); i.hasNext();)
@@ -296,12 +323,13 @@ void UDPListener::processPendingUnicastDatagrams()
             }
 
             for (int i = 0; i < chunksOwnedMessage.chunk_state_size(); i++)
-            {
-               if (chunksOwnedMessage.chunk_state(i))
-                  this->currentChunkDownloads[i]->addPeerID(header.getSenderID());
-               else
-                  this->currentChunkDownloads[i]->rmPeerID(header.getSenderID());
-            }
+               if (PM::IPeer* peer = this->peerManager->getPeer(header.getSenderID()))
+               {
+                  if (chunksOwnedMessage.chunk_state(i))
+                     this->currentChunkDownloads[i]->addPeer(peer);
+                  else
+                     this->currentChunkDownloads[i]->rmPeer(peer);
+               }
          }
          break;
 
@@ -349,7 +377,7 @@ void UDPListener::initMulticastUDPSocket()
    static const int BUFFER_SIZE_UDP = SETTINGS.get<quint32>("udp_read_buffer_size");
    const int multicastSocketDescriptor = this->multicastSocket.socketDescriptor();
 #if defined(Q_OS_DARWIN)
-   if (int error = 0) // TODO
+   if (int error = 0) // TODO: Mac OS X
 #else
    if (int error = setsockopt(multicastSocketDescriptor, SOL_SOCKET, SO_RCVBUF, (char*)&BUFFER_SIZE_UDP, sizeof BUFFER_SIZE_UDP))
 #endif
@@ -381,14 +409,18 @@ void UDPListener::initUnicastUDPSocket()
    connect(&this->unicastSocket, SIGNAL(readyRead()), this, SLOT(processPendingUnicastDatagrams()));
 }
 
+/**
+  * Writes a given protobuff message to the buffer (this->buffer) prefixed by a header.
+  * @return the total size (header size + message size). Return 0 if the total size is bigger than 'Protos.Core.Settings.max_udp_datagram_size'.
+  */
 int UDPListener::writeMessageToBuffer(Common::MessageHeader::MessageType type, const google::protobuf::Message& message)
 {
    const int bodySize = message.ByteSize();
-   Common::MessageHeader header(type, bodySize, this->peerManager->getID());
+   const Common::MessageHeader header(type, bodySize, this->peerManager->getSelf()->getID());
 
-   if (Common::MessageHeader::HEADER_SIZE + bodySize > static_cast<int>(SETTINGS.get<quint32>("max_udp_datagram_size")))
+   if (Common::MessageHeader::HEADER_SIZE + bodySize > this->MAX_UDP_DATAGRAM_PAYLOAD_SIZE)
    {
-      L_ERRO(QString("Datagram size too big : %1").arg(Common::MessageHeader::HEADER_SIZE + bodySize));
+      L_ERRO(QString("Datagram size too big: %1, max allowed: %2").arg(Common::MessageHeader::HEADER_SIZE + bodySize).arg(this->MAX_UDP_DATAGRAM_PAYLOAD_SIZE));
       return 0;
    }
 
@@ -403,18 +435,24 @@ int UDPListener::writeMessageToBuffer(Common::MessageHeader::MessageType type, c
   */
 Common::MessageHeader UDPListener::readDatagramToBuffer(QUdpSocket& socket, QHostAddress& peerAddress)
 {
-   qint64 datagramSize = socket.readDatagram(this->buffer, BUFFER_SIZE, &peerAddress);
+   quint16 port;
+   const qint64 datagramSize = socket.readDatagram(this->buffer, BUFFER_SIZE, &peerAddress, &port);
+   if (datagramSize == -1)
+   {
+      L_WARN(QString("UDPListener::readDatagramToBuffer(..): Unable to read multicast datagram from address:port: %1:%2").arg(peerAddress.toString()).arg(port));
+      return Common::MessageHeader();
+   }
 
    Common::MessageHeader header = Common::MessageHeader::readHeader(buffer);
 
    if (header.getSize() > datagramSize - Common::MessageHeader::HEADER_SIZE)
    {
-      L_ERRO("header.getSize() > datagramSize");
+      L_ERRO("The message size (header.size) exceeds the datagram size received");
       header.setNull();
       return header;
    }
 
-   if (header.getSenderID() == this->peerManager->getID())
+   if (header.getSenderID() == this->peerManager->getSelf()->getID())
    {
       // L_WARN("We receive a datagram from ourself, skip"); // Don't care..
       header.setNull();

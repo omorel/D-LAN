@@ -59,13 +59,14 @@ RemoteConnection::RemoteConnection(
    QSharedPointer<NL::INetworkListener> networkListener,
    QTcpSocket* socket
 ) :
-   MessageSocket(new RemoteConnection::Logger(), socket, peerManager->getID()),
+   MessageSocket(new RemoteConnection::Logger(), socket, peerManager->getSelf()->getID()),
    fileManager(fileManager),
    peerManager(peerManager),
    uploadManager(uploadManager),
    downloadManager(downloadManager),
    networkListener(networkListener),
-   authenticated(false)
+   authenticated(false),
+   saltChallenge(0)
  #if DEBUG
    ,loggerRefreshState(LM::Builder::newLogger("RemoteConnection (State)"))
  #endif
@@ -84,15 +85,19 @@ RemoteConnection::RemoteConnection(
    this->timerRefresh.setInterval(SETTINGS.get<quint32>("remote_refresh_rate"));
    this->timerRefresh.setSingleShot(true);
    connect(&this->timerRefresh, SIGNAL(timeout()), this, SLOT(refresh()));
-   this->refresh();
+
+   this->timerCloseSocket.setInterval(MAX_DELAY_WAITING_AUTH_RES);
+   this->timerCloseSocket.setSingleShot(true);
+   connect(&this->timerCloseSocket, SIGNAL(timeout()), this, SLOT(closeSocket()));
 
    connect(&this->networkListener->getChat(), SIGNAL(newMessage(const Protos::GUI::EventChatMessages_Message&)), this, SLOT(newChatMessage(const Protos::GUI::EventChatMessages_Message&)));
-   this->sendLastChatMessages();
 
    this->loggerHook = LM::Builder::newLoggerHook(LM::Severity(LM::SV_FATAL_ERROR | LM::SV_ERROR | LM::SV_END_USER | LM::SV_WARNING));
 
    qRegisterMetaType< QSharedPointer<const LM::IEntry> >("QSharedPointer<const LM::IEntry>");
    connect(this->loggerHook.data(), SIGNAL(newLogEntry(QSharedPointer<const LM::IEntry>)), this, SLOT(newLogEntry(QSharedPointer<const LM::IEntry>)), Qt::QueuedConnection);
+
+   this->askForAuthentication();
 }
 
 RemoteConnection::~RemoteConnection()
@@ -103,8 +108,8 @@ RemoteConnection::~RemoteConnection()
 
 void RemoteConnection::send(Common::MessageHeader::MessageType type, const google::protobuf::Message& message)
 {
-   // When not authenticated we can only send messages of type 'GUI_AUTHENTICATION_RESULT'.
-   if (!this->authenticated && type != Common::MessageHeader::GUI_AUTHENTICATION_RESULT)
+   // When not authenticated we can only send messages of type 'GUI_AUTHENTICATION_RESULT' or 'GUI_ASK_FOR_AUTHENTICATION'.
+   if (!this->authenticated && type != Common::MessageHeader::GUI_ASK_FOR_AUTHENTICATION && type != Common::MessageHeader::GUI_AUTHENTICATION_RESULT)
       return;
 
    Common::MessageSocket::send(type, message);
@@ -118,7 +123,7 @@ void RemoteConnection::sendMessageToItself(const QString& message)
    Protos::GUI::EventChatMessages eventChatMessages;
 
    Protos::GUI::EventChatMessages_Message* eventChatMessage = eventChatMessages.add_message();
-   eventChatMessage->mutable_peer_id()->set_hash(this->peerManager->getID().getData(), Common::Hash::HASH_SIZE);
+   eventChatMessage->mutable_peer_id()->set_hash(this->peerManager->getSelf()->getID().getData(), Common::Hash::HASH_SIZE);
    eventChatMessage->set_time(QDateTime::currentMSecsSinceEpoch());
    Common::ProtoHelper::setStr(*eventChatMessage, &Protos::GUI::EventChatMessages_Message::set_message, message);
 
@@ -129,13 +134,13 @@ void RemoteConnection::refresh()
 {
    Protos::GUI::State state;
 
-   state.mutable_myself()->mutable_peer_id()->set_hash(this->peerManager->getID().getData(), Common::Hash::HASH_SIZE);
+   state.mutable_myself()->mutable_peer_id()->set_hash(this->peerManager->getSelf()->getID().getData(), Common::Hash::HASH_SIZE);
    state.mutable_myself()->set_sharing_amount(this->fileManager->getAmount());
-   Common::ProtoHelper::setStr(*state.mutable_myself(), &Protos::GUI::State::Peer::set_nick, this->peerManager->getNick());
+   Common::ProtoHelper::setStr(*state.mutable_myself(), &Protos::GUI::State::Peer::set_nick, this->peerManager->getSelf()->getNick());
+   Common::ProtoHelper::setStr(*state.mutable_myself(), &Protos::GUI::State::Peer::set_core_version, Common::Global::getVersionFull());
 
    state.set_integrity_check_enabled(SETTINGS.get<bool>("check_received_data_integrity"));
-   if (SETTINGS.isSet("remote_password"))
-      state.mutable_current_password()->set_hash(Common::Hasher::hash(SETTINGS.get<Common::Hash>("remote_password")).getData(), Common::Hash::HASH_SIZE);
+   state.set_password_defined(!SETTINGS.get<Common::Hash>("remote_password").isNull());
 
    // Peers.
    QList<PM::IPeer*> peers = this->peerManager->getPeers();
@@ -145,6 +150,11 @@ void RemoteConnection::refresh()
       Protos::GUI::State::Peer* protoPeer = state.add_peer();
       protoPeer->mutable_peer_id()->set_hash(peer->getID().getData(), Common::Hash::HASH_SIZE);
       Common::ProtoHelper::setStr(*protoPeer, &Protos::GUI::State::Peer::set_nick, peer->getNick());
+
+      const QString coreVersion = peer->getCoreVersion();
+      if (!coreVersion.isNull())
+         Common::ProtoHelper::setStr(*protoPeer, &Protos::GUI::State::Peer::set_core_version, coreVersion);
+
       protoPeer->set_sharing_amount(peer->getSharingAmount());
       Common::ProtoHelper::setIP(*protoPeer->mutable_ip(), peer->getIP());
    }
@@ -181,6 +191,7 @@ void RemoteConnection::refresh()
       Protos::GUI::State_Upload* protoUpload = state.add_upload();
       if (upload->getChunk()->populateEntry(protoUpload->mutable_file()))
       {
+         protoUpload->mutable_file()->mutable_chunk()->Clear();
          protoUpload->set_id(upload->getID());
          protoUpload->set_current_part(upload->getChunk()->getNum() + 1); // "+ 1" to begin at 1 and not 0.
          protoUpload->set_nb_part(upload->getChunk()->getNbTotalChunk());
@@ -245,6 +256,11 @@ void RemoteConnection::refresh()
    this->send(Common::MessageHeader::GUI_STATE, state);
 }
 
+void RemoteConnection::closeSocket()
+{
+   this->socket->close();
+}
+
 void RemoteConnection::newChatMessage(const Protos::GUI::EventChatMessages_Message& message)
 {
    Protos::GUI::EventChatMessages eventChatMessages;
@@ -289,7 +305,7 @@ void RemoteConnection::newLogEntry(QSharedPointer<const LM::IEntry> entry)
 void RemoteConnection::sendNoPasswordDefinedResult()
 {
    Protos::GUI::AuthenticationResult authResultMessage;
-   authResultMessage.set_status(Protos::GUI::AuthenticationResult::PASSWORD_NOT_DEFINED);
+   authResultMessage.set_status(Protos::GUI::AuthenticationResult::AUTH_PASSWORD_NOT_DEFINED);
    this->send(Common::MessageHeader::GUI_AUTHENTICATION_RESULT, authResultMessage);
    this->socket->close();
 }
@@ -297,9 +313,21 @@ void RemoteConnection::sendNoPasswordDefinedResult()
 void RemoteConnection::sendBadPasswordResult()
 {
    Protos::GUI::AuthenticationResult authResultMessage;
-   authResultMessage.set_status(Protos::GUI::AuthenticationResult::BAD_PASSWORD);
+   authResultMessage.set_status(Protos::GUI::AuthenticationResult::AUTH_BAD_PASSWORD);
    this->send(Common::MessageHeader::GUI_AUTHENTICATION_RESULT, authResultMessage);
    this->socket->close();
+}
+
+void RemoteConnection::askForAuthentication()
+{
+   Protos::GUI::AskForAuthentication askForAuthenticationMessage;
+   askForAuthenticationMessage.set_salt(SETTINGS.get<quint64>("salt"));
+
+   this->saltChallenge = (static_cast<quint64>(this->mtrand.randInt()) << 32) | this->mtrand.randInt();
+   askForAuthenticationMessage.set_salt_challenge(this->saltChallenge);
+
+   this->timerCloseSocket.start();
+   this->send(Common::MessageHeader::GUI_ASK_FOR_AUTHENTICATION, askForAuthenticationMessage);
 }
 
 void RemoteConnection::removeGetEntriesResult(const PM::IGetEntriesResult* getEntriesResult)
@@ -317,7 +345,7 @@ void RemoteConnection::sendLastChatMessages()
 
 void RemoteConnection::onNewMessage(Common::MessageHeader::MessageType type, const google::protobuf::Message& message)
 {
-   if (type != Common::MessageHeader::GUI_AUTHENTICATION && !this->authenticated)
+   if (!this->authenticated && type != Common::MessageHeader::GUI_AUTHENTICATION)
       return;
 
    switch (type)
@@ -330,31 +358,31 @@ void RemoteConnection::onNewMessage(Common::MessageHeader::MessageType type, con
       {
          const Protos::GUI::Authentication& authenticationMessage = static_cast<const Protos::GUI::Authentication&>(message);
 
-         if (this->isLocal())
-            this->authenticated = true;
-         else
-         {
-            Common::Hash passwordHashReceived(authenticationMessage.password().hash());
-            Common::Hash actualPasswordHash = SETTINGS.get<Common::Hash>("remote_password");
+         this->timerCloseSocket.stop();
 
-            if (actualPasswordHash.isNull())
+         if (!this->isLocal())
+         {
+            Common::Hash passwordReceived(authenticationMessage.password_challenge().hash());
+            Common::Hash currentPassword = SETTINGS.get<Common::Hash>("remote_password");
+
+            if (currentPassword.isNull())
             {
                QTimer::singleShot(SETTINGS.get<quint32>("delay_gui_connection_fail"), this, SLOT(sendNoPasswordDefinedResult()));
+               break;
             }
-            else if (passwordHashReceived != actualPasswordHash)
+            else if (passwordReceived != Common::Hasher::hashWithSalt(currentPassword, this->saltChallenge))
             {
                QTimer::singleShot(SETTINGS.get<quint32>("delay_gui_connection_fail"), this, SLOT(sendBadPasswordResult()));
-            }
-            else // OK.
-            {
-               Protos::GUI::AuthenticationResult authResultMessage;
-               authResultMessage.set_status(Protos::GUI::AuthenticationResult_Status_OK);
-               this->send(Common::MessageHeader::GUI_AUTHENTICATION_RESULT, authResultMessage);
-               this->authenticated = true;
-               this->refresh();
-               this->sendLastChatMessages();
+               break;
             }
          }
+
+         Protos::GUI::AuthenticationResult authResultMessage;
+         authResultMessage.set_status(Protos::GUI::AuthenticationResult::AUTH_OK);
+         this->send(Common::MessageHeader::GUI_AUTHENTICATION_RESULT, authResultMessage);
+         this->authenticated = true;
+         this->refresh();
+         this->sendLastChatMessages();
       }
       break;
 
@@ -369,9 +397,20 @@ void RemoteConnection::onNewMessage(Common::MessageHeader::MessageType type, con
       {
          const Protos::GUI::ChangePassword& passMessage = static_cast<const Protos::GUI::ChangePassword&>(message);
 
-         if (!SETTINGS.isSet("remote_password") || SETTINGS.get<Common::Hash>("remote_password") == Common::Hash(passMessage.old_password().hash()))
+         Common::Hash newPassword(passMessage.new_password().hash());
+         Common::Hash currentPassword = SETTINGS.get<Common::Hash>("remote_password");
+
+         if (newPassword.isNull()) // If the new password is null, the password is reset.
          {
-            SETTINGS.set("remote_password", Common::Hash(passMessage.new_password().hash()));
+            SETTINGS.set("remote_password", Common::Hash());
+            SETTINGS.rm("salt");
+            SETTINGS.save();
+            this->refresh();
+         }
+         else if (currentPassword.isNull() || currentPassword == Common::Hash(passMessage.old_password().hash()))
+         {
+            SETTINGS.set("remote_password", newPassword);
+            SETTINGS.set("salt", static_cast<quint64>(passMessage.new_salt()));
             SETTINGS.save();
             this->refresh();
          }
@@ -438,7 +477,7 @@ void RemoteConnection::onNewMessage(Common::MessageHeader::MessageType type, con
             if (!results.isEmpty())
             {
                Protos::Common::FindResult& result = results.first();
-               result.mutable_peer_id()->set_hash(this->peerManager->getID().getData(), Common::Hash::HASH_SIZE);
+               result.mutable_peer_id()->set_hash(this->peerManager->getSelf()->getID().getData(), Common::Hash::HASH_SIZE);
                result.set_tag(tag);
                this->searchFound(result);
             }
@@ -469,7 +508,7 @@ void RemoteConnection::onNewMessage(Common::MessageHeader::MessageType type, con
          tagMess.set_tag(tag);
          this->send(Common::MessageHeader::GUI_BROWSE_TAG, tagMess);
 
-         if (peer)
+         if (peer && peer != this->peerManager->getSelf())
          {
             Protos::Core::GetEntries getEntries;
             getEntries.mutable_dirs()->CopyFrom(browseMessage.dirs());
@@ -486,7 +525,7 @@ void RemoteConnection::onNewMessage(Common::MessageHeader::MessageType type, con
             Protos::GUI::BrowseResult result;
 
             // If we want to browse our files.
-            if (peerID == this->peerManager->getID())
+            if (peerID == this->peerManager->getSelf()->getID())
             {
                for (int i = 0; i < browseMessage.dirs().entry_size(); i++)
                   result.add_entries()->CopyFrom(this->fileManager->getEntries(browseMessage.dirs().entry(i)));
@@ -539,7 +578,7 @@ void RemoteConnection::onNewMessage(Common::MessageHeader::MessageType type, con
 
          QList<quint64> downloadIDRefs;
          for (int i = 0; i < moveDownloadsMessage.id_ref_size(); i++)
-            downloadIDRefs << moveDownloadsMessage.id_to_move(i);
+            downloadIDRefs << moveDownloadsMessage.id_ref(i);
 
          QList<quint64> downloadIDs;
          for (int i = 0; i < moveDownloadsMessage.id_to_move_size(); i++)
